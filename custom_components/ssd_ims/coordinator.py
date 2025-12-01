@@ -1,268 +1,322 @@
 """Data coordinator for SSD IMS integration."""
+
 import asyncio
 import logging
 import random
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
-from zoneinfo import ZoneInfo
 
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.statistics import (
+    async_add_external_statistics,
+    get_last_statistics,
+    StatisticMeanType,
+)
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.update_coordinator import (DataUpdateCoordinator,
-                                                      UpdateFailed)
+from homeassistant.helpers.update_coordinator import (
+    DataUpdateCoordinator,
+    UpdateFailed,
+)
+from homeassistant.util import dt as dt_util
 
 from .api_client import SsdImsApiClient
-from .const import (API_DELAY_MAX, API_DELAY_MIN, CONF_ENABLE_IDLE_SENSORS,
-                    CONF_ENABLE_SUPPLY_SENSORS, CONF_POINT_OF_DELIVERY,
-                    CONF_SCAN_INTERVAL, DEFAULT_ENABLE_IDLE_SENSORS,
-                    DEFAULT_ENABLE_SUPPLY_SENSORS, DEFAULT_POINT_OF_DELIVERY,
-                    DEFAULT_SCAN_INTERVAL, DOMAIN, SENSOR_TYPE_ACTUAL_CONSUMPTION,
-                    SENSOR_TYPE_ACTUAL_SUPPLY, SENSOR_TYPE_IDLE_CONSUMPTION,
-                    SENSOR_TYPE_IDLE_SUPPLY, TIME_PERIODS_CONFIG)
+from .const import (
+    API_DELAY_MAX,
+    API_DELAY_MIN,
+    CONF_HISTORY_DAYS,
+    CONF_POINT_OF_DELIVERY,
+    DEFAULT_HISTORY_DAYS,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    PERIOD_YESTERDAY,
+    SENSOR_TYPE_ACTUAL_CONSUMPTION,
+    SENSOR_TYPE_ACTUAL_SUPPLY,
+    _calculate_yesterday_range,
+)
 from .models import ChartData, PointOfDelivery
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _sanitize_name(name: str) -> str:
+    """Sanitize name for use in entity IDs."""
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    sanitized = re.sub(r"_+", "_", sanitized)
+    return sanitized.strip("_")
 
 
 class SsdImsDataCoordinator(DataUpdateCoordinator):
     """Data coordinator for SSD IMS integration."""
 
     def __init__(
-        self, hass: HomeAssistant, api_client: SsdImsApiClient, config: Dict[str, Any]
+        self,
+        hass: HomeAssistant,
+        api_client: SsdImsApiClient,
+        config: Dict[str, Any],
+        entry: ConfigEntry,
     ) -> None:
         """Initialize coordinator."""
         self.api_client = api_client
         self.config = config
-        self.pods: Dict[str, PointOfDelivery] = {}  # pod_id -> PointOfDelivery
+        self.entry = entry
+        self.pods: Dict[str, PointOfDelivery] = {}
 
         scan_interval = timedelta(
             minutes=config.get("scan_interval", DEFAULT_SCAN_INTERVAL)
         )
-
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=scan_interval)
 
     async def update_config(self, new_config: Dict[str, Any]) -> None:
-        """Update coordinator configuration and trigger data refresh."""
-        old_config = self.config.copy()
-        self.config.update(new_config)
-        
-        # Check if sensor configuration changed
-        sensor_config_changed = (
-            old_config.get(CONF_ENABLE_SUPPLY_SENSORS) != new_config.get(CONF_ENABLE_SUPPLY_SENSORS) or
-            old_config.get(CONF_ENABLE_IDLE_SENSORS) != new_config.get(CONF_ENABLE_IDLE_SENSORS)
+        """Update coordinator configuration."""
+        self.config = new_config
+        new_interval = timedelta(
+            minutes=new_config.get("scan_interval", DEFAULT_SCAN_INTERVAL)
         )
-        
-        # Check if scan interval changed
-        scan_interval_changed = (
-            old_config.get(CONF_SCAN_INTERVAL) != new_config.get(CONF_SCAN_INTERVAL)
-        )
-        
-        # Update scan interval if changed
-        if scan_interval_changed:
-            new_scan_interval = new_config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-            self.update_interval = timedelta(minutes=new_scan_interval)
-            _LOGGER.info("Updated scan interval to %d minutes", new_scan_interval)
-        
-        # Trigger immediate data refresh if sensor configuration changed
-        if sensor_config_changed:
-            _LOGGER.info(
-                "Sensor configuration changed (supply: %s, idle: %s), triggering immediate data refresh",
-                new_config.get(CONF_ENABLE_SUPPLY_SENSORS),
-                new_config.get(CONF_ENABLE_IDLE_SENSORS)
-            )
-            await self.async_request_refresh()
-        else:
-            _LOGGER.debug("No sensor configuration changes detected")
-
-    def _get_random_api_delay(self) -> float:
-        """Get random API delay between configured min and max values."""
-        # Generate random delay between API_DELAY_MIN and API_DELAY_MAX
-        delay = random.uniform(API_DELAY_MIN, API_DELAY_MAX)
-        # Ensure minimum of 1 second (hardcoded as requested)
-        return max(0.3, delay)
+        if self.update_interval != new_interval:
+            self.update_interval = new_interval
+            _LOGGER.info("Update interval changed to %s minutes", new_interval.total_seconds() / 60)
 
     async def _async_update_data(self) -> Dict[str, Any]:
-        """Fetch data from API."""
+        """Fetch data from API and update statistics."""
         try:
             _LOGGER.info("Starting data update for SSD IMS integration")
 
-            # Get POD configuration - now using stable pod_ids instead of pod_texts
-            pod_ids = self.config.get(CONF_POINT_OF_DELIVERY, DEFAULT_POINT_OF_DELIVERY)
-            if not pod_ids:
-                _LOGGER.info("No PODs configured, discovering available PODs")
-                # Discover PODs if not configured
+            if not self.pods:
                 await self._discover_pods()
-                pod_ids = list(self.pods.keys())
-                _LOGGER.info("Discovered %d PODs: %s", len(pod_ids), pod_ids)
-            else:
-                _LOGGER.info("Using configured PODs: %s", pod_ids)
-                _LOGGER.debug("Available POD IDs: %s", list(self.pods.keys()))
 
-                # Check if we need to discover PODs (e.g., if configured PODs are not
-                # found)
-                if not self.pods:
-                    _LOGGER.info("No PODs discovered yet, discovering available PODs")
-                    await self._discover_pods()
+            pod_ids = self.config.get(CONF_POINT_OF_DELIVERY) or list(self.pods.keys())
+            if not pod_ids:
+                _LOGGER.warning("No PODs configured or discovered. Skipping update.")
+                return {}
 
-                # Check if any configured PODs are not found
-                missing_pods = [pod for pod in pod_ids if pod not in self.pods]
-                if missing_pods:
-                    _LOGGER.warning("Some configured PODs not found: %s", missing_pods)
-                    _LOGGER.debug("Available PODs: %s", list(self.pods.keys()))
-                    _LOGGER.debug("Configured PODs: %s", pod_ids)
+            await self._update_statistics(pod_ids)
 
-                    # Remove missing PODs from the list
-                    pod_ids = [pod for pod in pod_ids if pod in self.pods]
-                    _LOGGER.info("Using available PODs: %s", pod_ids)
+            all_pod_data = {pod_id: {} for pod_id in pod_ids}
+            await self._fetch_cumulative_totals_from_statistics(all_pod_data)
 
-            # Use Slovakia timezone for correct local time calculations
-            sk_tz = ZoneInfo("Europe/Bratislava")
-            now = datetime.now(sk_tz)
-            
-            _LOGGER.debug("Current time in Slovakia timezone: %s", now)
+            now = dt_util.now()
+            for pod_id in pod_ids:
+                pod = self.pods.get(pod_id)
+                if not pod:
+                    continue
 
-            # Fetch data for each POD
-            all_pod_data = {}
-
-            for pod_index, pod_id in enumerate(pod_ids):
-                _LOGGER.debug("Processing POD: %s", pod_id)
+                chart_data_by_period = {}
                 try:
-                    pod = self.pods.get(pod_id)
-                    if not pod:
-                        _LOGGER.warning(
-                            "POD %s not found in discovered PODs, skipping", pod_id
-                        )
-                        _LOGGER.debug("Available PODs: %s", list(self.pods.keys()))
-                        continue
-
-                    # Calculate date ranges and fetch data for each configured period
-                    chart_data_by_period = {}
-                    period_info = {}
-                    
-                    _LOGGER.debug("Using random API delay between %s-%s seconds between requests", API_DELAY_MIN, API_DELAY_MAX)
-                    
-                    for period_index, (period_key, config) in enumerate(TIME_PERIODS_CONFIG.items()):
-                        try:
-                            # Use the callback to calculate date range
-                            calculate_range = config["calculate_range"]
-                            period_start, period_end = calculate_range(now)
-                            
-                            period_info[period_key] = {
-                                "start": period_start,
-                                "end": period_end,
-                                "days": (period_end - period_start).days,
-                                "display_name": config["display_name"]
-                            }
-                            
-                            # Add delay before API call (except for first request)
-                            if period_index > 0:
-                                delay = self._get_random_api_delay()
-                                _LOGGER.debug(
-                                    "Sleeping %.2f seconds before fetching %s data for POD %s",
-                                    delay, period_key, pod_id
-                                )
-                                await asyncio.sleep(delay)
-                            
-                            # Fetch chart data for this period
-                            _LOGGER.debug("Fetching %s data for POD %s", period_key, pod_id)
-                            chart_data_by_period[period_key] = await self.api_client.get_chart_data(
-                                pod_id, period_start, period_end
-                            )
-                            
-                        except Exception as e:
-                            _LOGGER.error(
-                                "Error calculating date range for period %s: %s", 
-                                period_key, e
-                            )
-                            continue
-
-                    _LOGGER.debug(
-                        "Time periods for POD %s: %s",
-                        pod_id,
-                        {k: f"{v['start']} to {v['end']} ({v['days']} days)" 
-                         for k, v in period_info.items()}
+                    period_start, period_end = _calculate_yesterday_range(now)
+                    chart_data_by_period[
+                        PERIOD_YESTERDAY
+                    ] = await self.api_client.get_chart_data(
+                        pod_id, period_start, period_end
                     )
-
-                    # Log chart data summary for debugging
-                    for period_key, chart_data in chart_data_by_period.items():
-                        _LOGGER.debug(
-                            "%s data for POD %s: metering_datetime count=%d, sum_actual_consumption=%s",
-                            TIME_PERIODS_CONFIG[period_key]["display_name"],
-                            pod_id,
-                            len(chart_data.metering_datetime),
-                            chart_data.sum_actual_consumption,
-                        )
-
-                    # Aggregate data by time periods using configurable chart data
-                    aggregated_data = self._aggregate_data(chart_data_by_period)
-
-                    _LOGGER.debug(
-                        "Aggregated data for POD %s: %s", pod_id, aggregated_data
+                except Exception as e:
+                    _LOGGER.error(
+                        "Error fetching yesterday data for POD %s: %s", pod_id, e
                     )
+                    continue
 
-                    # Store POD data using stable pod_id as key
-                    pod_data = {
-                        "session_pod_id": pod.value,  # Store session pod_id for internal reference
-                        "pod_text": pod.text,  # Store original text for reference
+                aggregated_data = self._aggregate_data(chart_data_by_period)
+                pod_data = all_pod_data.setdefault(pod_id, {})
+                pod_data.update(
+                    {
                         "aggregated_data": aggregated_data,
                         "last_update": now.isoformat(),
                     }
-                    
-                    # Add chart data for each period dynamically
-                    for period_key, chart_data in chart_data_by_period.items():
-                        pod_data[f"chart_data_{period_key}"] = chart_data
-                    
-                    all_pod_data[pod_id] = pod_data
+                )
+                for period_key, chart_data in chart_data_by_period.items():
+                    pod_data[f"chart_data_{period_key}"] = chart_data
 
-                    # Add delay between PODs (except for last POD)
-                    if pod_index < len(pod_ids) - 1:
-                        delay = self._get_random_api_delay()
-                        _LOGGER.debug(
-                            "Sleeping %.2f seconds before processing next POD",
-                            delay
-                        )
-                        await asyncio.sleep(delay)
-
-                except Exception as e:
-                    error_msg = str(e)
-                    _LOGGER.error(
-                        "Error fetching data for POD %s: %s", pod_id, error_msg
-                    )
-
-                    # Check if this is an authentication error
-                    if any(
-                        auth_error in error_msg.lower()
-                        for auth_error in [
-                            "not authenticated",
-                            "authentication failed",
-                            "session expired",
-                            "re-authentication failed",
-                            "text/html",
-                        ]
-                    ):
-                        _LOGGER.error(
-                            "Authentication error detected, stopping data update"
-                        )
-                        raise ConfigEntryAuthFailed("Authentication failed") from e
-
-                    # Continue with other PODs for non-auth errors
-                    continue
-
-            # Note: We no longer track last_update time since we always fetch full 7-day range
-
-            _LOGGER.info(
-                "Data update completed successfully for %d PODs", len(all_pod_data)
-            )
+            _LOGGER.info("Data update for all sensors completed.")
             return all_pod_data
 
         except ConfigEntryAuthFailed:
-            # Re-raise authentication failures
             raise
         except Exception as e:
             _LOGGER.error("Error updating data: %s", e)
-            if "Not authenticated" in str(e) or "Authentication failed" in str(e):
-                raise ConfigEntryAuthFailed("Authentication failed") from e
             raise UpdateFailed(f"Error updating data: {e}") from e
+
+    def _get_random_api_delay(self) -> float:
+        """Get random API delay."""
+        delay = random.uniform(API_DELAY_MIN, API_DELAY_MAX)
+        return max(0.3, delay)
+
+    async def _update_statistics(self, pod_ids: list[str]) -> None:
+        """
+        Unified function to import statistics.
+
+        Checks the last imported statistic and fetches all missing daily data
+        up to yesterday. Handles both initial import and daily updates.
+        """
+        # Always enable both consumption and supply sensors
+        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY]
+
+        for pod_id in pod_ids:
+            pod_name_mapping = self.config.get("pod_name_mapping", {})
+            pod_name = pod_name_mapping.get(pod_id, pod_id)
+
+            for sensor_type in enabled_sensor_types:
+                statistic_type_names = {
+                    SENSOR_TYPE_ACTUAL_CONSUMPTION: "actual_consumption",
+                    SENSOR_TYPE_ACTUAL_SUPPLY: "actual_supply",
+                }
+                statistic_type = statistic_type_names.get(sensor_type)
+                sanitized_friendly_name = _sanitize_name(pod_name)
+                statistic_name = f"{sanitized_friendly_name}_{statistic_type}".lower()
+                statistic_id = f"{DOMAIN}:{statistic_name}"
+
+                last_stats_result = await get_instance(
+                    self.hass
+                ).async_add_executor_job(
+                    get_last_statistics,
+                    self.hass,
+                    1,
+                    statistic_id,
+                    True,
+                    {"start", "sum"},
+                )
+
+                cumulative_sum = 0.0
+                start_date = dt_util.now().replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                last_stat_timestamp = None
+
+                if last_stats_result and statistic_id in last_stats_result:
+                    last_stat = last_stats_result[statistic_id][0]
+                    cumulative_sum = last_stat.get("sum") or 0.0
+                    start_val = last_stat.get("start")
+                    if start_val:
+                        if isinstance(start_val, (int, float)):
+                            start_val = dt_util.utc_from_timestamp(start_val)
+                        last_stat_timestamp = dt_util.as_local(start_val)
+                        start_date = last_stat_timestamp.replace(
+                            hour=0, minute=0, second=0, microsecond=0
+                        ) + timedelta(days=1)
+                else:
+                    history_days = self.config.get(
+                        CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS
+                    )
+                    start_date = start_date - timedelta(days=history_days)
+
+                end_date = dt_util.now().replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+
+                if start_date >= end_date:
+                    continue
+
+                stats_to_import = []
+                current_date = start_date
+                while current_date < end_date:
+                    day_start = current_date
+                    day_end = day_start + timedelta(days=1) - timedelta(seconds=1)
+
+                    try:
+                        await asyncio.sleep(self._get_random_api_delay())
+                        chart_data = await self.api_client.get_chart_data(
+                            pod_id, day_start, day_end
+                        )
+
+                        if not chart_data or not chart_data.metering_datetime:
+                            current_date += timedelta(days=1)
+                            continue
+
+                        hourly_data = {}
+                        for i, timestamp_str in enumerate(chart_data.metering_datetime):
+                            value = (
+                                chart_data.actual_consumption[i]
+                                if sensor_type == SENSOR_TYPE_ACTUAL_CONSUMPTION
+                                else chart_data.actual_supply[i]
+                            )
+                            if value is None:
+                                continue
+
+                            timestamp_end_utc = datetime.fromisoformat(
+                                timestamp_str.replace("Z", "+00:00")
+                            )
+                            timestamp_start_utc = timestamp_end_utc - timedelta(
+                                minutes=15
+                            )
+                            hour_timestamp = timestamp_start_utc.replace(
+                                minute=0, second=0, microsecond=0
+                            )
+
+                            if hour_timestamp not in hourly_data:
+                                hourly_data[hour_timestamp] = 0.0
+                            hourly_data[hour_timestamp] += value * 0.25
+
+                        for hour_timestamp, hourly_value in sorted(hourly_data.items()):
+                            if (
+                                last_stat_timestamp
+                                and hour_timestamp <= last_stat_timestamp
+                            ):
+                                continue
+
+                            cumulative_sum += hourly_value
+                            stats_to_import.append(
+                                {
+                                    "start": hour_timestamp,
+                                    "sum": cumulative_sum,
+                                }
+                            )
+                    except Exception as e:
+                        _LOGGER.error(
+                            "Failed to fetch or process data for %s on %s: %s",
+                            statistic_id,
+                            day_start.date(),
+                            e,
+                        )
+
+                    current_date += timedelta(days=1)
+
+                if stats_to_import:
+                    metadata = {
+                        "has_sum": True,
+                        "mean_type": StatisticMeanType.NONE,
+                        "name": f"{pod_name} {sensor_type.replace('_', ' ').title()}",
+                        "source": DOMAIN,
+                        "statistic_id": statistic_id,
+                        "unit_of_measurement": "kWh",
+                        "unit_class": "energy",
+                    }
+                    async_add_external_statistics(self.hass, metadata, stats_to_import)
+
+    async def _fetch_cumulative_totals_from_statistics(
+        self, pod_data_dict: Dict[str, Any]
+    ) -> None:
+        """Fetch cumulative totals from external statistics."""
+        # Always enable both consumption and supply sensors
+        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY]
+
+        for pod_id, pod_data in pod_data_dict.items():
+            pod_name_mapping = self.config.get("pod_name_mapping", {})
+            pod_name = pod_name_mapping.get(pod_id, pod_id)
+
+            if "cumulative_totals" not in pod_data:
+                pod_data["cumulative_totals"] = {}
+
+            for sensor_type in enabled_sensor_types:
+                statistic_type_names = {
+                    SENSOR_TYPE_ACTUAL_CONSUMPTION: "actual_consumption",
+                    SENSOR_TYPE_ACTUAL_SUPPLY: "actual_supply",
+                }
+                statistic_type = statistic_type_names.get(sensor_type, sensor_type)
+                sanitized_friendly_name = _sanitize_name(pod_name)
+                statistic_name = f"{sanitized_friendly_name}_{statistic_type}".lower()
+                statistic_id = f"{DOMAIN}:{statistic_name}"
+
+                last_stats = await get_instance(self.hass).async_add_executor_job(
+                    get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
+                )
+
+                if last_stats and statistic_id in last_stats:
+                    last_stat = last_stats[statistic_id][0]
+                    cumulative_total = last_stat.get("sum", 0.0)
+                    pod_data["cumulative_totals"][sensor_type] = cumulative_total
+                else:
+                    pod_data["cumulative_totals"][sensor_type] = 0.0
 
     async def _discover_pods(self) -> None:
         """Discover points of delivery."""
@@ -271,111 +325,43 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             if not pods:
                 raise Exception("No points of delivery found")
 
-            _LOGGER.debug(
-                "Raw PODs from API: %s", [(pod.text, pod.value) for pod in pods]
-            )
-
-            # Store PODs by stable pod.id instead of text for stable identification
-            self.pods = {}
-            for pod in pods:
-                try:
-                    pod_id = pod.id  # Use stable 16-20 char ID
-                    self.pods[pod_id] = pod
-                except ValueError as e:
-                    _LOGGER.warning(
-                        "Skipping POD with invalid ID format: %s - %s", pod.text, e
-                    )
-                    continue
-
-            _LOGGER.info("Discovered %d PODs", len(self.pods))
-            _LOGGER.debug(
-                "POD mapping (id -> value): %s",
-                {pod_id: pod.value for pod_id, pod in self.pods.items()},
-            )
-
+            self.pods = {pod.id: pod for pod in pods}
         except Exception as e:
             error_msg = str(e)
-            _LOGGER.error("Error discovering PODs: %s", error_msg)
-
-            # Check if this is an authentication error
             if any(
                 auth_error in error_msg.lower()
                 for auth_error in [
                     "not authenticated",
                     "authentication failed",
                     "session expired",
-                    "re-authentication failed",
-                    "text/html",
                 ]
             ):
                 raise ConfigEntryAuthFailed(
                     "Authentication failed during POD discovery"
                 ) from e
-
             raise
 
-    def _aggregate_data(self, chart_data_by_period: Dict[str, ChartData]) -> Dict[str, Dict[str, float]]:
-        """Aggregate data by different time periods using configurable chart data."""
+    def _aggregate_data(
+        self, chart_data_by_period: Dict[str, ChartData]
+    ) -> Dict[str, Dict[str, float]]:
+        """Aggregate data for other (non-energy) sensors."""
         aggregated = {}
-        
-        # Get sensor configuration options
-        enable_supply_sensors = self.config.get(
-            CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-        )
-        enable_idle_sensors = self.config.get(
-            CONF_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_IDLE_SENSORS
-        )
+        # Always enable both consumption and supply sensors
+        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY]
 
-        # Create list of enabled sensor types
-        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION]  # Always enabled
-        
-        if enable_supply_sensors:
-            enabled_sensor_types.append(SENSOR_TYPE_ACTUAL_SUPPLY)
-        
-        if enable_idle_sensors:
-            enabled_sensor_types.extend([
-                SENSOR_TYPE_IDLE_CONSUMPTION,
-                SENSOR_TYPE_IDLE_SUPPLY,
-            ])
-        
         for period_key, chart_data in chart_data_by_period.items():
-            period_name = TIME_PERIODS_CONFIG[period_key]["display_name"]
             aggregated[period_key] = {}
-            
+
             if chart_data and hasattr(chart_data, "sum_actual_consumption"):
-                # Extract only enabled sensor values for this period
                 if SENSOR_TYPE_ACTUAL_CONSUMPTION in enabled_sensor_types:
                     aggregated[period_key][SENSOR_TYPE_ACTUAL_CONSUMPTION] = (
                         chart_data.sum_actual_consumption or 0.0
                     )
-                
                 if SENSOR_TYPE_ACTUAL_SUPPLY in enabled_sensor_types:
                     aggregated[period_key][SENSOR_TYPE_ACTUAL_SUPPLY] = (
                         chart_data.sum_actual_supply or 0.0
                     )
-                
-                if SENSOR_TYPE_IDLE_CONSUMPTION in enabled_sensor_types:
-                    aggregated[period_key][SENSOR_TYPE_IDLE_CONSUMPTION] = (
-                        chart_data.sum_idle_consumption or 0.0
-                    )
-                
-                if SENSOR_TYPE_IDLE_SUPPLY in enabled_sensor_types:
-                    aggregated[period_key][SENSOR_TYPE_IDLE_SUPPLY] = (
-                        chart_data.sum_idle_supply or 0.0
-                    )
-
-                # Debug log only for enabled sensors
-                debug_msg = f"{period_name} chart data summaries: actual_consumption={chart_data.sum_actual_consumption}"
-                if enable_supply_sensors:
-                    debug_msg += f", actual_supply={chart_data.sum_actual_supply}"
-                if enable_idle_sensors:
-                    debug_msg += f", idle_consumption={chart_data.sum_idle_consumption}, idle_supply={chart_data.sum_idle_supply}"
-                
-                _LOGGER.debug(debug_msg)
             else:
-                # Fallback: set enabled sensor values to 0 if no chart data available
                 for sensor_type in enabled_sensor_types:
                     aggregated[period_key][sensor_type] = 0.0
-                _LOGGER.warning("No %s chart data available, setting %s values to 0", period_name, period_key)
-
         return aggregated

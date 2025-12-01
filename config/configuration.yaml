@@ -3,6 +3,8 @@
 
 history:
 
+energy:
+
 # HTTP Configuration with Reverse Proxy Support
 http:
   # Basic HTTP settings

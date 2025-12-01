@@ -1,23 +1,30 @@
 """Sensor platform for SSD IMS integration."""
+
 import logging
 import re
-from typing import Any, Optional
+from datetime import datetime
+from typing import Optional
 
-from homeassistant.components.sensor import (SensorDeviceClass, SensorEntity,
-                                             SensorStateClass)
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
+from homeassistant.util import dt as dt_util
 
-from .const import (CONF_ENABLE_IDLE_SENSORS, CONF_ENABLE_SUPPLY_SENSORS,
-                    CONF_POD_NAME_MAPPING, CONF_POINT_OF_DELIVERY,
-                    DEFAULT_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS,
-                    DEFAULT_POINT_OF_DELIVERY, DOMAIN,
-                    SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY, 
-                    SENSOR_TYPE_IDLE_CONSUMPTION, SENSOR_TYPE_IDLE_SUPPLY, 
-                    TIME_PERIODS, TIME_PERIODS_CONFIG)
+from .const import (
+    CONF_POD_NAME_MAPPING,
+    CONF_POINT_OF_DELIVERY,
+    DEFAULT_POINT_OF_DELIVERY,
+    DOMAIN,
+    PERIOD_YESTERDAY,
+    SENSOR_TYPE_ACTUAL_CONSUMPTION,
+    SENSOR_TYPE_ACTUAL_SUPPLY,
+)
 from .coordinator import SsdImsDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,65 +38,36 @@ async def async_setup_entry(
     """Set up SSD IMS sensors from config entry."""
     coordinator: SsdImsDataCoordinator = hass.data[DOMAIN][config_entry.entry_id]
 
-    # Get POD configuration - now using stable pod_ids instead of pod_texts
     pod_ids = config_entry.data.get(CONF_POINT_OF_DELIVERY, DEFAULT_POINT_OF_DELIVERY)
     pod_name_mapping = config_entry.data.get(CONF_POD_NAME_MAPPING, {})
-    
-    # Get sensor configuration options
-    enable_supply_sensors = config_entry.data.get(
-        CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-    )
-    enable_idle_sensors = config_entry.data.get(
-        CONF_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_IDLE_SENSORS
-    )
 
-    # Create list of enabled sensor types
-    enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION]  # Always enabled
-    
-    if enable_supply_sensors:
-        enabled_sensor_types.append(SENSOR_TYPE_ACTUAL_SUPPLY)
-    
-    if enable_idle_sensors:
-        enabled_sensor_types.extend([
-            SENSOR_TYPE_IDLE_CONSUMPTION,
-            SENSOR_TYPE_IDLE_SUPPLY,
-        ])
+    # Always enable both consumption and supply sensors
+    enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY]
 
-    _LOGGER.debug("Enabled sensor types: %s", enabled_sensor_types)
-
-    # Create sensors for each POD
     sensors = []
     for pod_id in pod_ids:
-        # Get friendly name for this POD
-        friendly_name = pod_name_mapping.get(pod_id)
-        if not friendly_name:
-            # Use POD ID as fallback
-            friendly_name = pod_id
+        friendly_name = pod_name_mapping.get(pod_id, pod_id)
+        sensors.append(SsdImsLastUpdateSensor(coordinator, pod_id, friendly_name))
 
-        # Sanitize friendly name for use in sensor names
-        friendly_name = _sanitize_name(friendly_name)
-
-        # Create sensors for enabled sensor types and time periods
         for sensor_type in enabled_sensor_types:
-            for period in TIME_PERIODS:
-                sensors.append(
-                    SsdImsSensor(
-                        coordinator, sensor_type, period, pod_id, friendly_name
-                    )
+            sensors.append(
+                SsdImsYesterdaySensor(
+                    coordinator,
+                    sensor_type,
+                    PERIOD_YESTERDAY,
+                    pod_id,
+                    friendly_name,
                 )
+            )
 
     async_add_entities(sensors)
 
 
 def _sanitize_name(name: str) -> str:
     """Sanitize name for use in sensor names."""
-    # Replace spaces and special characters with underscores
     sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    # Remove multiple consecutive underscores
     sanitized = re.sub(r"_+", "_", sanitized)
-    # Remove leading/trailing underscores
-    sanitized = sanitized.strip("_")
-    return sanitized
+    return sanitized.strip("_")
 
 
 class SsdImsSensor(SensorEntity):
@@ -98,134 +76,20 @@ class SsdImsSensor(SensorEntity):
     def __init__(
         self,
         coordinator: SsdImsDataCoordinator,
-        sensor_type: str,
-        period: str,
-        pod_id: str,  # Now using stable pod_id instead of pod_text
+        pod_id: str,
         friendly_name: str,
     ) -> None:
         """Initialize sensor."""
         self.coordinator = coordinator
-        self.sensor_type = sensor_type
-        self.period = period
-        self.pod_id = pod_id  # Store stable pod_id for identification
+        self.pod_id = pod_id
         self.friendly_name = friendly_name
 
-        # Generate sensor name (without POD info)
-        sensor_name = self._generate_sensor_name()
-        
-        # Sanitize sensor name for unique ID
-        sanitized_sensor_name = _sanitize_name(sensor_name)
-        
-        # Set unique ID - use pod_id + sensor_name format for entity ID
-        self._attr_unique_id = f"{pod_id}_{sanitized_sensor_name}"
-
-        # Setup entity naming using the new Home Assistant entity naming convention
-        self._setup_entity_naming(friendly_name, sensor_name, pod_id)
-
-        # Set unit attributes based on sensor type
-        if self.sensor_type in [
-            SENSOR_TYPE_ACTUAL_CONSUMPTION,
-            SENSOR_TYPE_ACTUAL_SUPPLY,
-        ]:
-            self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-            self._attr_device_class = SensorDeviceClass.ENERGY
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING  # For energy sensors
-        elif self.sensor_type in [
-            SENSOR_TYPE_IDLE_CONSUMPTION,
-            SENSOR_TYPE_IDLE_SUPPLY,
-        ]:
-            self._attr_native_unit_of_measurement = "kVARh"
-            self._attr_device_class = None  # No device class for reactive power
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING  # For reactive energy
-        else:
-            self._attr_native_unit_of_measurement = None
-            self._attr_device_class = None
-            self._attr_state_class = None
-
-        # Set device info
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, self.pod_id)},  # Use stable pod_id as identifier
-            "name": self.friendly_name,  # Device name (POD friendly name)
+            "identifiers": {(DOMAIN, self.pod_id)},
+            "name": self.friendly_name,
             "manufacturer": "IMS.SSD.sk",
             "model": "IMS Portal",
-            "sw_version": self.pod_id,  # Add POD ID as software version
         }
-
-    @property
-    def device_class(self) -> Optional[SensorDeviceClass]:
-        """Return device class."""
-        return self._attr_device_class
-
-    @property
-    def state_class(self) -> Optional[SensorStateClass]:
-        """Return state class."""
-        return self._attr_state_class
-
-    @property
-    def native_unit_of_measurement(self) -> Optional[str]:
-        """Return native unit of measurement."""
-        return self._attr_native_unit_of_measurement
-
-    @property
-    def unit_of_measurement(self) -> Optional[str]:
-        """Return unit of measurement (legacy property for compatibility)."""
-        return self._attr_native_unit_of_measurement
-
-    @property
-    def native_value(self) -> Optional[StateType]:
-        """Return sensor value."""
-        if not self.coordinator.data:
-            _LOGGER.debug(
-                "Sensor %s: No coordinator data available", self._attr_unique_id
-            )
-            return None
-
-        # Get data for this specific POD using stable pod_id
-        pod_data = self.coordinator.data.get(self.pod_id, {})
-        if not pod_data:
-            _LOGGER.debug(
-                "Sensor %s: No data for POD %s", self._attr_unique_id, self.pod_id
-            )
-            return None
-
-        aggregated_data = pod_data.get("aggregated_data", {})
-        if not aggregated_data:
-            _LOGGER.debug(
-                "Sensor %s: No aggregated data for POD %s",
-                self._attr_unique_id,
-                self.pod_id,
-            )
-            return None
-
-        period_data = aggregated_data.get(self.period, {})
-        if not period_data:
-            _LOGGER.debug(
-                "Sensor %s: No data for period %s", self._attr_unique_id, self.period
-            )
-            return None
-
-        value = period_data.get(self.sensor_type)
-        _LOGGER.debug(
-            "Sensor %s: Value=%s (type=%s, period=%s, sensor_type=%s)",
-            self._attr_unique_id,
-            value,
-            type(value).__name__,
-            self.period,
-            self.sensor_type,
-        )
-        
-        # Ensure value is numeric (float) for proper unit display
-        if value is not None:
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                _LOGGER.warning(
-                    "Sensor %s: Could not convert value %s to float", 
-                    self._attr_unique_id, 
-                    value
-                )
-                return None
-        return None
 
     @property
     def available(self) -> bool:
@@ -244,64 +108,100 @@ class SsdImsSensor(SensorEntity):
             self.coordinator.async_add_listener(self.async_write_ha_state)
         )
 
-    def _generate_sensor_name(self) -> str:
-        """Generate sensor name based on type and period using configuration."""
-        # Sensor type names  
-        type_names = {
-            SENSOR_TYPE_ACTUAL_CONSUMPTION: "Active Consumption",
-            SENSOR_TYPE_ACTUAL_SUPPLY: "Active Supply",
-            SENSOR_TYPE_IDLE_CONSUMPTION: "Idle Consumption",
-            SENSOR_TYPE_IDLE_SUPPLY: "Idle Supply",
-        }
-
-        type_name = type_names.get(self.sensor_type, self.sensor_type)
-        
-        # Get period display name from configuration
-        period_config = TIME_PERIODS_CONFIG.get(self.period, {})
-        period_name = period_config.get("display_name", self.period)
-
-        return f"{type_name} {period_name}"
-
-    def _setup_entity_naming(self, device_name: str, sensor_name: str, pod_id: str) -> None:
-        """
-        Setup entity naming using the new Home Assistant entity naming convention.
-
-        This method implements the new Home Assistant entity naming standard:
-        - Sets has_entity_name = True
-        - Stores the friendly name for the name property
-        - The name property will return only the data point name
-        - Home Assistant automatically generates friendly_name by combining entity name with device name
-
-        Args:
-            device_name: The device name (POD friendly name)
-            sensor_name: The sensor/control name from API (data point name)
-            pod_id: The POD ID for identification
-        """
-        # Set has_entity_name to True for new Home Assistant naming convention
+    def _setup_entity_naming(self, sensor_name: str) -> None:
+        """Set up entity naming."""
         self._attr_has_entity_name = True
         self._attr_name = sensor_name
 
-        # Store additional info for backward compatibility if needed
-        self._device_name = device_name
-        self._sensor_name = sensor_name
-        self._pod_id_stored = pod_id
+
+class SsdImsEnergySensor(SsdImsSensor):
+    """Base class for energy sensors."""
+
+    def __init__(
+        self,
+        coordinator: SsdImsDataCoordinator,
+        sensor_type: str,
+        period: str,
+        pod_id: str,
+        friendly_name: str,
+    ) -> None:
+        """Initialize energy sensor."""
+        super().__init__(coordinator, pod_id, friendly_name)
+        self.sensor_type = sensor_type
+        self.period = period
+        self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+        self._attr_device_class = SensorDeviceClass.ENERGY
+
+    def _generate_sensor_name(self, suffix: str) -> str:
+        """Generate sensor name based on type and suffix."""
+        type_names = {
+            SENSOR_TYPE_ACTUAL_CONSUMPTION: "Actual Consumption",
+            SENSOR_TYPE_ACTUAL_SUPPLY: "Actual Supply",
+        }
+        type_name = type_names.get(self.sensor_type, "Energy")
+        return f"{type_name} {suffix}"
+
+
+class SsdImsYesterdaySensor(SsdImsEnergySensor):
+    """Sensor for yesterday's values."""
+
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(
+        self,
+        coordinator: SsdImsDataCoordinator,
+        sensor_type: str,
+        period: str,
+        pod_id: str,
+        friendly_name: str,
+    ) -> None:
+        """Initialize yesterday sensor."""
+        super().__init__(coordinator, sensor_type, period, pod_id, friendly_name)
+
+        sensor_name = self._generate_sensor_name("Yesterday")
+        sanitized_sensor_name = _sanitize_name(sensor_name)
+        self._attr_unique_id = f"{pod_id}_{sanitized_sensor_name}_{sensor_type}"
+        self._setup_entity_naming(sensor_name)
 
     @property
-    def extra_state_attributes(self) -> Optional[dict[str, Any]]:
-        """Return extra state attributes."""
-        if not self.coordinator.data:
+    def native_value(self) -> Optional[StateType]:
+        """Return sensor value (yesterday's total)."""
+        if not self.coordinator.data or not (
+            pod_data := self.coordinator.data.get(self.pod_id)
+        ):
             return None
 
-        attrs = {
-            "sensor_type": self.sensor_type,
-            "time_period": self.period,
-            "pod_id": self.pod_id,  # Use stable pod_id
-            "friendly_name": self.friendly_name,
-        }
+        aggregated_data = pod_data.get("aggregated_data", {})
+        period_data = aggregated_data.get(self.period, {})
+        value = period_data.get(self.sensor_type)
+        return float(value) if value is not None else None
 
-        # Add POD information if available
-        pod_data = self.coordinator.data.get(self.pod_id, {})
-        if pod_data:
-            attrs["pod_text"] = pod_data.get("pod_text")  # Original text for reference
 
-        return attrs
+class SsdImsLastUpdateSensor(SsdImsSensor):
+    """Sensor for last update timestamp."""
+
+    def __init__(
+        self,
+        coordinator: SsdImsDataCoordinator,
+        pod_id: str,
+        friendly_name: str,
+    ) -> None:
+        """Initialize last update sensor."""
+        super().__init__(coordinator, pod_id, friendly_name)
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+
+        sensor_name = "Last Update"
+        sanitized_sensor_name = _sanitize_name(sensor_name)
+        self._attr_unique_id = f"{pod_id}_{sanitized_sensor_name}"
+        self._setup_entity_naming(sensor_name)
+
+    @property
+    def native_value(self) -> Optional[datetime]:
+        """Return sensor value (last update timestamp)."""
+        if not self.coordinator.data or not (
+            pod_data := self.coordinator.data.get(self.pod_id)
+        ):
+            return None
+
+        last_update_str = pod_data.get("last_update")
+        return dt_util.parse_datetime(last_update_str) if last_update_str else None

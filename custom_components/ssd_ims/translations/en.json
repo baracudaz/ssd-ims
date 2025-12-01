@@ -3,11 +3,10 @@
     "step": {
       "user": {
         "title": "SSD IMS Configuration",
-        "description": "Enter your SSD IMS portal credentials",
+        "description": "Enter your portal credentials https://ims.ssd.sk",
         "data": {
           "username": "Username",
-          "password": "Password",
-          "scan_interval": "Update interval (minutes)"
+          "password": "Password"
         }
       },
       "point_of_delivery": {
@@ -19,15 +18,19 @@
       },
       "pod_naming": {
         "title": "Configure POD Names",
-        "description": "Set friendly names for your Points of Delivery\n\n{pod_info}",
+        "description": "Set friendly names for your Points of Delivery. This will be the visible name in Home Assistant - for example, your home address, apartment name, or location description.\n\n{pod_info}",
         "data": {}
       },
-      "sensor_options": {
-        "title": "Sensor Configuration", 
-        "description": "Choose which sensor types to enable",
+      "history_import": {
+        "title": "Data Import & Refresh",
+        "description": "Configure how often the integration checks for new data and optionally import historical energy data into Home Assistant's statistics database for use in the Energy dashboard.",
         "data": {
-          "enable_supply_sensors": "Enable supply sensors",
-          "enable_idle_sensors": "Enable idle/reactive power sensors"
+          "scan_interval": "Update interval",
+          "enable_history_import": "Enable import of historical energy data",
+          "history_days": "Number of days to import"
+        },
+        "data_description": {
+          "scan_interval": "How often to check for new energy data. Since data is typically available once per day, frequent updates are not necessary."
         }
       }
     },
@@ -35,7 +38,7 @@
       "invalid_auth": "Invalid username or password",
       "cannot_connect": "Cannot connect to SSD IMS portal",
       "no_pods_selected": "Please select at least one Point of Delivery",
-      "invalid_format": "Name contains invalid characters. Use only letters, numbers, and underscores",
+      "invalid_format": "Name must contain at least one letter or number",
       "too_long": "Name is too long (maximum 32 characters)",
       "duplicate_name": "This name is already used for another POD"
     },
@@ -49,9 +52,7 @@
         "title": "SSD IMS Options",
         "description": "Update integration settings",
         "data": {
-          "scan_interval": "Update interval (minutes)",
-          "enable_supply_sensors": "Enable supply sensors",
-          "enable_idle_sensors": "Enable idle/reactive power sensors"
+          "scan_interval": "Update interval"
         }
       }
     }
