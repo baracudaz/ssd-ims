@@ -69,6 +69,16 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         )
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=scan_interval)
 
+    async def update_config(self, new_config: Dict[str, Any]) -> None:
+        """Update coordinator configuration."""
+        self.config = new_config
+        new_interval = timedelta(
+            minutes=new_config.get("scan_interval", DEFAULT_SCAN_INTERVAL)
+        )
+        if self.update_interval != new_interval:
+            self.update_interval = new_interval
+            _LOGGER.info("Update interval changed to %s minutes", new_interval.total_seconds() / 60)
+
     async def _async_update_data(self) -> Dict[str, Any]:
         """Fetch data from API and update statistics."""
         try:
