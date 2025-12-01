@@ -13,12 +13,13 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .api_client import SsdImsApiClient
-from .const import (CONF_ENABLE_IDLE_SENSORS, CONF_ENABLE_SUPPLY_SENSORS,
+from .const import (CONF_ENABLE_HISTORY_IMPORT,
+                    CONF_ENABLE_SUPPLY_SENSORS, CONF_HISTORY_DAYS,
                     CONF_POD_NAME_MAPPING, CONF_POINT_OF_DELIVERY,
-                    CONF_SCAN_INTERVAL, DEFAULT_ENABLE_IDLE_SENSORS,
-                    DEFAULT_ENABLE_SUPPLY_SENSORS, DEFAULT_SCAN_INTERVAL,
-                    DOMAIN, NAME, POD_NAME_MAX_LENGTH, POD_NAME_PATTERN,
-                    SCAN_INTERVAL_OPTIONS)
+                    CONF_SCAN_INTERVAL, DEFAULT_ENABLE_HISTORY_IMPORT,
+                    DEFAULT_ENABLE_SUPPLY_SENSORS,
+                    DEFAULT_HISTORY_DAYS, DEFAULT_SCAN_INTERVAL, DOMAIN, NAME,
+                    POD_NAME_MAX_LENGTH, POD_NAME_PATTERN, SCAN_INTERVAL_OPTIONS)
 from .models import PointOfDelivery
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,7 +39,8 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._selected_pods: Optional[List[str]] = None
         self._pod_name_mapping: Optional[Dict[str, str]] = None
         self._enable_supply_sensors: Optional[bool] = None
-        self._enable_idle_sensors: Optional[bool] = None
+        self._enable_history_import: Optional[bool] = None
+        self._history_days: Optional[int] = None
 
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -128,34 +130,46 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             pod_name_mapping = {}
-            friendly_names = set()
+            sanitized_names = set()
 
-            # Validate POD names using stable pod.id
+            # Process POD names using stable pod.id
             for pod_id in self._selected_pods:
-                friendly_name = user_input.get(f"pod_name_{pod_id}", "").strip()
+                display_name = user_input.get(f"pod_name_{pod_id}", "").strip()
 
-                if friendly_name:
-                    # Validate name format
-                    if not re.match(POD_NAME_PATTERN, friendly_name):
-                        errors[f"pod_name_{pod_id}"] = "invalid_format"
-                        continue
-
-                    # Check length
-                    if len(friendly_name) > POD_NAME_MAX_LENGTH:
+                if display_name:
+                    # Check length before sanitization
+                    if len(display_name) > POD_NAME_MAX_LENGTH:
                         errors[f"pod_name_{pod_id}"] = "too_long"
                         continue
 
-                    # Check uniqueness
-                    if friendly_name in friendly_names:
+                    # Sanitize the display name to create entity-safe name
+                    # Replace spaces and special characters with underscores
+                    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", display_name)
+                    # Remove multiple consecutive underscores
+                    sanitized = re.sub(r"_+", "_", sanitized)
+                    # Remove leading/trailing underscores
+                    sanitized = sanitized.strip("_")
+
+                    # Convert to lowercase for entity ID
+                    sanitized_lower = sanitized.lower()
+
+                    # Check if sanitized name is empty
+                    if not sanitized_lower:
+                        errors[f"pod_name_{pod_id}"] = "invalid_format"
+                        continue
+
+                    # Check uniqueness of sanitized names
+                    if sanitized_lower in sanitized_names:
                         errors[f"pod_name_{pod_id}"] = "duplicate_name"
                         continue
 
-                    friendly_names.add(friendly_name)
-                    pod_name_mapping[pod_id] = friendly_name
+                    sanitized_names.add(sanitized_lower)
+                    # Store the original display name (will be sanitized when creating entity IDs)
+                    pod_name_mapping[pod_id] = display_name
 
             if not errors:
                 self._pod_name_mapping = pod_name_mapping
-                return await self.async_step_sensor_options()
+                return await self.async_step_history_import()
 
         # Create POD naming form using stable pod.id
         schema_fields = {}
@@ -182,18 +196,21 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info_lines.append(f"• {pod.text} → {pod_id}")
         return "\n".join(info_lines)
 
-    async def async_step_sensor_options(
+    async def async_step_history_import(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        """Handle sensor options configuration step."""
+        """Handle history data import configuration step."""
         errors = {}
 
         if user_input is not None:
             self._enable_supply_sensors = user_input.get(
                 CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
             )
-            self._enable_idle_sensors = user_input.get(
-                CONF_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_IDLE_SENSORS
+            self._enable_history_import = user_input.get(
+                CONF_ENABLE_HISTORY_IMPORT, DEFAULT_ENABLE_HISTORY_IMPORT
+            )
+            self._history_days = user_input.get(
+                CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS
             )
 
             # Create config entry
@@ -204,7 +221,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_POINT_OF_DELIVERY: self._selected_pods,
                 CONF_POD_NAME_MAPPING: self._pod_name_mapping,
                 CONF_ENABLE_SUPPLY_SENSORS: self._enable_supply_sensors,
-                CONF_ENABLE_IDLE_SENSORS: self._enable_idle_sensors,
+                CONF_HISTORY_DAYS: self._history_days if self._enable_history_import else 0,
             }
 
             return self.async_create_entry(
@@ -213,7 +230,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         return self.async_show_form(
-            step_id="sensor_options",
+            step_id="history_import",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
@@ -221,9 +238,13 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         default=DEFAULT_ENABLE_SUPPLY_SENSORS,
                     ): bool,
                     vol.Optional(
-                        CONF_ENABLE_IDLE_SENSORS,
-                        default=DEFAULT_ENABLE_IDLE_SENSORS,
+                        CONF_ENABLE_HISTORY_IMPORT,
+                        default=DEFAULT_ENABLE_HISTORY_IMPORT,
                     ): bool,
+                    vol.Optional(
+                        CONF_HISTORY_DAYS,
+                        default=DEFAULT_HISTORY_DAYS,
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=365)),
                 }
             ),
             errors=errors,
@@ -257,12 +278,6 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
                     CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
                 ),
             )
-            new_data[CONF_ENABLE_IDLE_SENSORS] = user_input.get(
-                CONF_ENABLE_IDLE_SENSORS,
-                self.config_entry.data.get(
-                    CONF_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_IDLE_SENSORS
-                ),
-            )
 
             # Update config entry
             self.hass.config_entries.async_update_entry(
@@ -290,12 +305,6 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
                         CONF_ENABLE_SUPPLY_SENSORS,
                         default=self.config_entry.data.get(
                             CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-                        ),
-                    ): bool,
-                    vol.Optional(
-                        CONF_ENABLE_IDLE_SENSORS,
-                        default=self.config_entry.data.get(
-                            CONF_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_IDLE_SENSORS
                         ),
                     ): bool,
                 }

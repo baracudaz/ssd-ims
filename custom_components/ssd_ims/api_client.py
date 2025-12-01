@@ -353,15 +353,19 @@ class SsdImsApiClient:
             raise Exception("Not authenticated")
 
         try:
-            # First, get current session POD ID for this stable pod_id
-            session_pod_id = await self._get_session_pod_id_by_stable_id(pod_id)
-            if not session_pod_id:
+            # Efficiently get session_pod_id and pod_text in one go
+            pods = await self.get_points_of_delivery()
+            target_pod = None
+            for pod in pods:
+                if pod.id == pod_id:
+                    target_pod = pod
+                    break
+
+            if not target_pod:
                 raise Exception(f"POD not found for stable ID: {pod_id}")
 
-            # Get pod text for API call
-            pod_text = await self._get_pod_text_by_stable_id(pod_id)
-            if not pod_text:
-                raise Exception(f"POD text not found for stable ID: {pod_id}")
+            session_pod_id = target_pod.value
+            pod_text = target_pod.text
 
             payload = {
                 "pointOfDeliveryId": session_pod_id,
@@ -369,6 +373,12 @@ class SsdImsApiClient:
                 "validToDate": to_date.isoformat(),
                 "pointOfDeliveryText": pod_text,
             }
+
+            _LOGGER.debug(
+                "Chart data request: validFromDate=%s, validToDate=%s",
+                payload["validFromDate"],
+                payload["validToDate"]
+            )
 
             data = await self._retry_request_with_backoff(
                 "POST", API_CHART, json=payload
@@ -430,40 +440,6 @@ class SsdImsApiClient:
         except Exception as e:
             _LOGGER.error("Unexpected error getting chart data: %s", e)
             raise
-
-    async def _get_session_pod_id_by_stable_id(self, pod_id: str) -> Optional[str]:
-        """Get current session POD ID for a given stable pod_id."""
-        try:
-            pods = await self.get_points_of_delivery()
-            for pod in pods:
-                try:
-                    if pod.id == pod_id:
-                        return pod.value
-                except ValueError:
-                    # Skip pods with invalid ID format
-                    continue
-            return None
-        except Exception as e:
-            _LOGGER.error(
-                "Error getting session POD ID for stable ID %s: %s", pod_id, e
-            )
-            return None
-
-    async def _get_pod_text_by_stable_id(self, pod_id: str) -> Optional[str]:
-        """Get POD text for a given stable pod_id."""
-        try:
-            pods = await self.get_points_of_delivery()
-            for pod in pods:
-                try:
-                    if pod.id == pod_id:
-                        return pod.text
-                except ValueError:
-                    # Skip pods with invalid ID format
-                    continue
-            return None
-        except Exception as e:
-            _LOGGER.error("Error getting POD text for stable ID %s: %s", pod_id, e)
-            return None
 
     async def _get_pod_id_by_text(self, pod_text: str) -> Optional[str]:
         """Get current POD ID for a given pod_text (label)."""

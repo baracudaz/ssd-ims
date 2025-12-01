@@ -19,15 +19,16 @@
       },
       "pod_naming": {
         "title": "Configure POD Names",
-        "description": "Set friendly names for your Points of Delivery\n\n{pod_info}",
+        "description": "Set display names for your Points of Delivery. Names can contain spaces and special characters - they will be automatically converted to valid entity names (e.g., \"Victory Port\" becomes \"victory_port\").\n\n{pod_info}",
         "data": {}
       },
-      "sensor_options": {
-        "title": "Sensor Configuration", 
-        "description": "Choose which sensor types to enable",
+      "history_import": {
+        "title": "Sensor & Data Configuration",
+        "description": "Configure sensor types and past energy data import. Past data will be imported once during initial setup into Home Assistant's statistics database for use in the Energy dashboard.",
         "data": {
           "enable_supply_sensors": "Enable supply sensors",
-          "enable_idle_sensors": "Enable idle/reactive power sensors"
+          "enable_history_import": "Enable import of past energy data",
+          "history_days": "Number of days"
         }
       }
     },
@@ -35,7 +36,7 @@
       "invalid_auth": "Invalid username or password",
       "cannot_connect": "Cannot connect to SSD IMS portal",
       "no_pods_selected": "Please select at least one Point of Delivery",
-      "invalid_format": "Name contains invalid characters. Use only letters, numbers, and underscores",
+      "invalid_format": "Name must contain at least one letter or number",
       "too_long": "Name is too long (maximum 32 characters)",
       "duplicate_name": "This name is already used for another POD"
     },
@@ -50,8 +51,7 @@
         "description": "Update integration settings",
         "data": {
           "scan_interval": "Update interval (minutes)",
-          "enable_supply_sensors": "Enable supply sensors",
-          "enable_idle_sensors": "Enable idle/reactive power sensors"
+          "enable_supply_sensors": "Enable supply sensors"
         }
       }
     }

@@ -11,12 +11,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
-from .const import (CONF_ENABLE_IDLE_SENSORS, CONF_ENABLE_SUPPLY_SENSORS,
+from .const import (CONF_ENABLE_SUPPLY_SENSORS,
                     CONF_POD_NAME_MAPPING, CONF_POINT_OF_DELIVERY,
-                    DEFAULT_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS,
+                    DEFAULT_ENABLE_SUPPLY_SENSORS,
                     DEFAULT_POINT_OF_DELIVERY, DOMAIN,
-                    SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY, 
-                    SENSOR_TYPE_IDLE_CONSUMPTION, SENSOR_TYPE_IDLE_SUPPLY, 
+                    SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY,
                     TIME_PERIODS, TIME_PERIODS_CONFIG)
 from .coordinator import SsdImsDataCoordinator
 
@@ -39,35 +38,23 @@ async def async_setup_entry(
     enable_supply_sensors = config_entry.data.get(
         CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
     )
-    enable_idle_sensors = config_entry.data.get(
-        CONF_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_IDLE_SENSORS
-    )
 
     # Create list of enabled sensor types
     enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION]  # Always enabled
-    
+
     if enable_supply_sensors:
         enabled_sensor_types.append(SENSOR_TYPE_ACTUAL_SUPPLY)
-    
-    if enable_idle_sensors:
-        enabled_sensor_types.extend([
-            SENSOR_TYPE_IDLE_CONSUMPTION,
-            SENSOR_TYPE_IDLE_SUPPLY,
-        ])
 
     _LOGGER.debug("Enabled sensor types: %s", enabled_sensor_types)
 
     # Create sensors for each POD
     sensors = []
     for pod_id in pod_ids:
-        # Get friendly name for this POD
+        # Get friendly name for this POD (keep original with spaces for display)
         friendly_name = pod_name_mapping.get(pod_id)
         if not friendly_name:
             # Use POD ID as fallback
             friendly_name = pod_id
-
-        # Sanitize friendly name for use in sensor names
-        friendly_name = _sanitize_name(friendly_name)
 
         # Create sensors for enabled sensor types and time periods
         for sensor_type in enabled_sensor_types:
@@ -123,24 +110,10 @@ class SsdImsSensor(SensorEntity):
         self._setup_entity_naming(friendly_name, sensor_name, pod_id)
 
         # Set unit attributes based on sensor type
-        if self.sensor_type in [
-            SENSOR_TYPE_ACTUAL_CONSUMPTION,
-            SENSOR_TYPE_ACTUAL_SUPPLY,
-        ]:
-            self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-            self._attr_device_class = SensorDeviceClass.ENERGY
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING  # For energy sensors
-        elif self.sensor_type in [
-            SENSOR_TYPE_IDLE_CONSUMPTION,
-            SENSOR_TYPE_IDLE_SUPPLY,
-        ]:
-            self._attr_native_unit_of_measurement = "kVARh"
-            self._attr_device_class = None  # No device class for reactive power
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING  # For reactive energy
-        else:
-            self._attr_native_unit_of_measurement = None
-            self._attr_device_class = None
-            self._attr_state_class = None
+        # All sensors are energy sensors (kWh)
+        self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+        self._attr_device_class = SensorDeviceClass.ENERGY
+        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
 
         # Set device info
         self._attr_device_info = {
@@ -173,7 +146,7 @@ class SsdImsSensor(SensorEntity):
 
     @property
     def native_value(self) -> Optional[StateType]:
-        """Return sensor value."""
+        """Return sensor value (cumulative total for Energy dashboard compatibility)."""
         if not self.coordinator.data:
             _LOGGER.debug(
                 "Sensor %s: No coordinator data available", self._attr_unique_id
@@ -188,43 +161,56 @@ class SsdImsSensor(SensorEntity):
             )
             return None
 
-        aggregated_data = pod_data.get("aggregated_data", {})
-        if not aggregated_data:
-            _LOGGER.debug(
-                "Sensor %s: No aggregated data for POD %s",
-                self._attr_unique_id,
-                self.pod_id,
-            )
-            return None
-
-        period_data = aggregated_data.get(self.period, {})
-        if not period_data:
-            _LOGGER.debug(
-                "Sensor %s: No data for period %s", self._attr_unique_id, self.period
-            )
-            return None
-
-        value = period_data.get(self.sensor_type)
-        _LOGGER.debug(
-            "Sensor %s: Value=%s (type=%s, period=%s, sensor_type=%s)",
-            self._attr_unique_id,
-            value,
-            type(value).__name__,
-            self.period,
-            self.sensor_type,
-        )
-        
-        # Ensure value is numeric (float) for proper unit display
-        if value is not None:
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                _LOGGER.warning(
-                    "Sensor %s: Could not convert value %s to float", 
-                    self._attr_unique_id, 
-                    value
+        # Get cumulative total from external statistics
+        # This makes the sensor compatible with the Energy dashboard
+        cumulative_totals = pod_data.get("cumulative_totals", {})
+        if cumulative_totals:
+            value = cumulative_totals.get(self.sensor_type)
+            if value is not None:
+                _LOGGER.debug(
+                    "Sensor %s: Cumulative value=%s (sensor_type=%s)",
+                    self._attr_unique_id,
+                    value,
+                    self.sensor_type,
                 )
-                return None
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    _LOGGER.warning(
+                        "Sensor %s: Could not convert cumulative value %s to float",
+                        self._attr_unique_id,
+                        value
+                    )
+                    return None
+
+        # Fallback to period data if cumulative totals not available
+        aggregated_data = pod_data.get("aggregated_data", {})
+        if aggregated_data:
+            period_data = aggregated_data.get(self.period, {})
+            if period_data:
+                value = period_data.get(self.sensor_type)
+                _LOGGER.debug(
+                    "Sensor %s: Period value=%s (period=%s, sensor_type=%s)",
+                    self._attr_unique_id,
+                    value,
+                    self.period,
+                    self.sensor_type,
+                )
+                if value is not None:
+                    try:
+                        return float(value)
+                    except (ValueError, TypeError):
+                        _LOGGER.warning(
+                            "Sensor %s: Could not convert period value %s to float",
+                            self._attr_unique_id,
+                            value
+                        )
+                        return None
+
+        _LOGGER.debug(
+            "Sensor %s: No data available (neither cumulative nor period)",
+            self._attr_unique_id
+        )
         return None
 
     @property
@@ -246,21 +232,22 @@ class SsdImsSensor(SensorEntity):
 
     def _generate_sensor_name(self) -> str:
         """Generate sensor name based on type and period using configuration."""
-        # Sensor type names  
+        # Sensor type names
         type_names = {
-            SENSOR_TYPE_ACTUAL_CONSUMPTION: "Active Consumption",
-            SENSOR_TYPE_ACTUAL_SUPPLY: "Active Supply",
-            SENSOR_TYPE_IDLE_CONSUMPTION: "Idle Consumption",
-            SENSOR_TYPE_IDLE_SUPPLY: "Idle Supply",
+            SENSOR_TYPE_ACTUAL_CONSUMPTION: "Actual Consumption",
+            SENSOR_TYPE_ACTUAL_SUPPLY: "Actual Supply",
         }
 
         type_name = type_names.get(self.sensor_type, self.sensor_type)
-        
+
         # Get period display name from configuration
         period_config = TIME_PERIODS_CONFIG.get(self.period, {})
-        period_name = period_config.get("display_name", self.period)
+        period_name = period_config.get("display_name", "")
 
-        return f"{type_name} {period_name}"
+        # Only add period name if it's not empty
+        if period_name:
+            return f"{type_name} {period_name}"
+        return type_name
 
     def _setup_entity_naming(self, device_name: str, sensor_name: str, pod_id: str) -> None:
         """
@@ -288,7 +275,7 @@ class SsdImsSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> Optional[dict[str, Any]]:
-        """Return extra state attributes."""
+        """Return extra state attributes including 15-minute time series data."""
         if not self.coordinator.data:
             return None
 
@@ -303,5 +290,54 @@ class SsdImsSensor(SensorEntity):
         pod_data = self.coordinator.data.get(self.pod_id, {})
         if pod_data:
             attrs["pod_text"] = pod_data.get("pod_text")  # Original text for reference
+
+            # Add 15-minute time series data from chart_data
+            chart_data_key = f"chart_data_{self.period}"
+            chart_data = pod_data.get(chart_data_key)
+
+            if chart_data:
+                # Add time series data as attributes
+                # Map sensor_type to chart_data field names
+                sensor_field_map = {
+                    "actual_consumption": "actual_consumption",
+                    "actual_supply": "actual_supply",
+                }
+
+                field_name = sensor_field_map.get(self.sensor_type)
+                if field_name and hasattr(chart_data, field_name):
+                    time_series = getattr(chart_data, field_name)
+                    timestamps = chart_data.metering_datetime
+
+                    # Only add if we have time series data
+                    if time_series and timestamps:
+                        attrs["timestamps"] = timestamps
+                        attrs["values"] = time_series
+                        attrs["data_points"] = len(time_series)
+
+                        # Add statistics for convenience
+                        if time_series:
+                            attrs["min_value"] = min(time_series)
+                            attrs["max_value"] = max(time_series)
+                            attrs["avg_value"] = sum(time_series) / len(time_series)
+
+                        _LOGGER.debug(
+                            "Added time series data to sensor %s: %d data points",
+                            self._attr_unique_id,
+                            len(time_series)
+                        )
+                else:
+                    _LOGGER.debug(
+                        "No time series data found for sensor %s (field_name=%s, has_attr=%s)",
+                        self._attr_unique_id,
+                        field_name,
+                        hasattr(chart_data, field_name) if chart_data else False
+                    )
+            else:
+                _LOGGER.debug(
+                    "No chart data found for sensor %s (key=%s, available_keys=%s)",
+                    self._attr_unique_id,
+                    chart_data_key,
+                    list(pod_data.keys()) if pod_data else []
+                )
 
         return attrs
