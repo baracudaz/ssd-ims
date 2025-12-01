@@ -15,7 +15,6 @@ CONF_POINT_OF_DELIVERY: Final = (
     "point_of_delivery"  # Now contains stable pod_ids instead of pod_texts
 )
 CONF_POD_NAME_MAPPING: Final = "pod_name_mapping"
-CONF_ENABLE_SUPPLY_SENSORS: Final = "enable_supply_sensors"
 CONF_ENABLE_HISTORY_IMPORT: Final = "enable_history_import"
 CONF_HISTORY_DAYS: Final = "history_days"
 CONF_HISTORY_IMPORT_DONE: Final = "history_import_done"
@@ -23,9 +22,8 @@ CONF_HISTORY_IMPORT_DONE: Final = "history_import_done"
 # Defaults
 DEFAULT_SCAN_INTERVAL: Final = 360  # 6 hours - sensible for daily data
 DEFAULT_POINT_OF_DELIVERY: Final = []
-DEFAULT_ENABLE_SUPPLY_SENSORS: Final = True
 DEFAULT_ENABLE_HISTORY_IMPORT: Final = True  # Enable by default
-DEFAULT_HISTORY_DAYS: Final = 30  # Import last 30 days of past data by default
+DEFAULT_HISTORY_DAYS: Final = 7  # Import last 7 days of past data by default
 
 # Options - Data is only available up to yesterday and released once per day
 # So polling frequently doesn't make sense

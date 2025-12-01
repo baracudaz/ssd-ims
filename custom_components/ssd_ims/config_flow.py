@@ -16,13 +16,11 @@ from homeassistant.helpers import config_validation as cv
 from .api_client import SsdImsApiClient
 from .const import (
     CONF_ENABLE_HISTORY_IMPORT,
-    CONF_ENABLE_SUPPLY_SENSORS,
     CONF_HISTORY_DAYS,
     CONF_POD_NAME_MAPPING,
     CONF_POINT_OF_DELIVERY,
     CONF_SCAN_INTERVAL,
     DEFAULT_ENABLE_HISTORY_IMPORT,
-    DEFAULT_ENABLE_SUPPLY_SENSORS,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -44,11 +42,10 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize config flow."""
         self._username: Optional[str] = None
         self._password: Optional[str] = None
-        self._scan_interval: Optional[int] = None
         self._pods: Optional[List[PointOfDelivery]] = None
         self._selected_pods: Optional[List[str]] = None
         self._pod_name_mapping: Optional[Dict[str, str]] = None
-        self._enable_supply_sensors: Optional[bool] = None
+        self._scan_interval: Optional[int] = None
         self._enable_history_import: Optional[bool] = None
         self._history_days: Optional[int] = None
 
@@ -61,9 +58,6 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._username = user_input[CONF_USERNAME]
             self._password = user_input[CONF_PASSWORD]
-            self._scan_interval = user_input.get(
-                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-            )
 
             try:
                 # Test authentication
@@ -86,9 +80,6 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_USERNAME): str,
                     vol.Required(CONF_PASSWORD): str,
-                    vol.Optional(
-                        CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
-                    ): vol.In(SCAN_INTERVAL_OPTIONS),
                 }
             ),
             errors=errors,
@@ -209,12 +200,12 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_history_import(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        """Handle history data import configuration step."""
+        """Handle final configuration step with update interval and history import."""
         errors = {}
 
         if user_input is not None:
-            self._enable_supply_sensors = user_input.get(
-                CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
+            self._scan_interval = user_input.get(
+                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
             )
             self._enable_history_import = user_input.get(
                 CONF_ENABLE_HISTORY_IMPORT, DEFAULT_ENABLE_HISTORY_IMPORT
@@ -228,7 +219,6 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SCAN_INTERVAL: self._scan_interval,
                 CONF_POINT_OF_DELIVERY: self._selected_pods,
                 CONF_POD_NAME_MAPPING: self._pod_name_mapping,
-                CONF_ENABLE_SUPPLY_SENSORS: self._enable_supply_sensors,
                 CONF_HISTORY_DAYS: self._history_days
                 if self._enable_history_import
                 else 0,
@@ -244,9 +234,8 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        CONF_ENABLE_SUPPLY_SENSORS,
-                        default=DEFAULT_ENABLE_SUPPLY_SENSORS,
-                    ): bool,
+                        CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
+                    ): vol.In(SCAN_INTERVAL_OPTIONS),
                     vol.Optional(
                         CONF_ENABLE_HISTORY_IMPORT,
                         default=DEFAULT_ENABLE_HISTORY_IMPORT,
@@ -282,12 +271,6 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
             # Update config entry
             new_data = self.config_entry.data.copy()
             new_data[CONF_SCAN_INTERVAL] = user_input[CONF_SCAN_INTERVAL]
-            new_data[CONF_ENABLE_SUPPLY_SENSORS] = user_input.get(
-                CONF_ENABLE_SUPPLY_SENSORS,
-                self.config_entry.data.get(
-                    CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-                ),
-            )
 
             # Update config entry
             self.hass.config_entries.async_update_entry(
@@ -314,12 +297,6 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
                             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
                         ),
                     ): vol.In(SCAN_INTERVAL_OPTIONS),
-                    vol.Optional(
-                        CONF_ENABLE_SUPPLY_SENSORS,
-                        default=self.config_entry.data.get(
-                            CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-                        ),
-                    ): bool,
                 }
             ),
             errors=errors,

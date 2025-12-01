@@ -3,11 +3,10 @@
     "step": {
       "user": {
         "title": "Konfigurácia SSD IMS",
-        "description": "Zadajte prihlasovacie údaje do SSD IMS portálu",
+        "description": "Zadajte prihlasovacie údaje do portálu https://ims.ssd.sk",
         "data": {
           "username": "Používateľské meno",
-          "password": "Heslo",
-          "scan_interval": "Interval aktualizácie"
+          "password": "Heslo"
         }
       },
       "point_of_delivery": {
@@ -19,16 +18,19 @@
       },
       "pod_naming": {
         "title": "Konfigurácia názvov OM",
-        "description": "Nastavte zobrazované názvy pre vaše odberné miesta. Názvy môžu obsahovať medzery a špeciálne znaky - budú automaticky prevedené na platné názvy entít (napr. \"Victory Port\" sa stane \"victory_port\").\n\n{pod_info}",
+        "description": "Nastavte priateľské názvy pre vaše odberné miesta. Toto bude zobrazený názov v Home Assistant - napríklad vaša adresa, názov bytu alebo popis lokality.\n\n{pod_info}",
         "data": {}
       },
       "history_import": {
-        "title": "Konfigurácia senzorov a údajov",
-        "description": "Nastavte typy senzorov a import minulých údajov o energii. Minulé údaje budú importované jednorazovo pri počiatočnej konfigurácii do štatistickej databázy Home Assistant pre použitie v prehľade energie.",
+        "title": "Import dát a obnova",
+        "description": "Nastavte, ako často integrácia kontroluje nové údaje a voliteľne importujte historické údaje o energii do štatistickej databázy Home Assistant pre použitie v prehľade energie.",
         "data": {
-          "enable_supply_sensors": "Povoliť senzory dodávky",
-          "enable_history_import": "Povoliť import minulých údajov o energii",
-          "history_days": "Počet dní"
+          "scan_interval": "Interval aktualizácie",
+          "enable_history_import": "Povoliť import historických údajov o energii",
+          "history_days": "Počet dní na import"
+        },
+        "data_description": {
+          "scan_interval": "Ako často kontrolovať nové údaje o energii. Keďže údaje sú zvyčajne dostupné raz denne, časté aktualizácie nie sú potrebné."
         }
       }
     },
@@ -50,8 +52,7 @@
         "title": "Možnosti SSD IMS",
         "description": "Aktualizovať nastavenia integrácie",
         "data": {
-          "scan_interval": "Interval aktualizácie",
-          "enable_supply_sensors": "Povoliť senzory dodávky"
+          "scan_interval": "Interval aktualizácie"
         }
       }
     }

@@ -10,12 +10,10 @@ from homeassistant.core import HomeAssistant
 
 from .api_client import SsdImsApiClient
 from .const import (
-    CONF_ENABLE_SUPPLY_SENSORS,
     CONF_HISTORY_DAYS,
     CONF_POD_NAME_MAPPING,
     CONF_POINT_OF_DELIVERY,
     CONF_SCAN_INTERVAL,
-    DEFAULT_ENABLE_SUPPLY_SENSORS,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_POINT_OF_DELIVERY,
     DEFAULT_SCAN_INTERVAL,
@@ -54,9 +52,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             CONF_POINT_OF_DELIVERY, DEFAULT_POINT_OF_DELIVERY
         ),  # Now contains stable pod_ids
         CONF_POD_NAME_MAPPING: entry.data.get(CONF_POD_NAME_MAPPING, {}),
-        CONF_ENABLE_SUPPLY_SENSORS: entry.data.get(
-            CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-        ),
         CONF_HISTORY_DAYS: entry.data.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS),
     }
 

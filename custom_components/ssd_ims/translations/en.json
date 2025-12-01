@@ -3,11 +3,10 @@
     "step": {
       "user": {
         "title": "SSD IMS Configuration",
-        "description": "Enter your SSD IMS portal credentials",
+        "description": "Enter your portal credentials https://ims.ssd.sk",
         "data": {
           "username": "Username",
-          "password": "Password",
-          "scan_interval": "Update interval"
+          "password": "Password"
         }
       },
       "point_of_delivery": {
@@ -19,16 +18,19 @@
       },
       "pod_naming": {
         "title": "Configure POD Names",
-        "description": "Set display names for your Points of Delivery. Names can contain spaces and special characters - they will be automatically converted to valid entity names (e.g., \"Victory Port\" becomes \"victory_port\").\n\n{pod_info}",
+        "description": "Set friendly names for your Points of Delivery. This will be the visible name in Home Assistant - for example, your home address, apartment name, or location description.\n\n{pod_info}",
         "data": {}
       },
       "history_import": {
-        "title": "Sensor & Data Configuration",
-        "description": "Configure sensor types and past energy data import. Past data will be imported once during initial setup into Home Assistant's statistics database for use in the Energy dashboard.",
+        "title": "Data Import & Refresh",
+        "description": "Configure how often the integration checks for new data and optionally import historical energy data into Home Assistant's statistics database for use in the Energy dashboard.",
         "data": {
-          "enable_supply_sensors": "Enable supply sensors",
-          "enable_history_import": "Enable import of past energy data",
-          "history_days": "Number of days"
+          "scan_interval": "Update interval",
+          "enable_history_import": "Enable import of historical energy data",
+          "history_days": "Number of days to import"
+        },
+        "data_description": {
+          "scan_interval": "How often to check for new energy data. Since data is typically available once per day, frequent updates are not necessary."
         }
       }
     },
@@ -50,8 +52,7 @@
         "title": "SSD IMS Options",
         "description": "Update integration settings",
         "data": {
-          "scan_interval": "Update interval",
-          "enable_supply_sensors": "Enable supply sensors"
+          "scan_interval": "Update interval"
         }
       }
     }

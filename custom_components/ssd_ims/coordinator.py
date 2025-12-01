@@ -26,10 +26,8 @@ from .api_client import SsdImsApiClient
 from .const import (
     API_DELAY_MAX,
     API_DELAY_MIN,
-    CONF_ENABLE_SUPPLY_SENSORS,
     CONF_HISTORY_DAYS,
     CONF_POINT_OF_DELIVERY,
-    DEFAULT_ENABLE_SUPPLY_SENSORS,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -141,12 +139,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         Checks the last imported statistic and fetches all missing daily data
         up to yesterday. Handles both initial import and daily updates.
         """
-        enable_supply_sensors = self.config.get(
-            CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-        )
-        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION]
-        if enable_supply_sensors:
-            enabled_sensor_types.append(SENSOR_TYPE_ACTUAL_SUPPLY)
+        # Always enable both consumption and supply sensors
+        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY]
 
         for pod_id in pod_ids:
             pod_name_mapping = self.config.get("pod_name_mapping", {})
@@ -283,12 +277,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         self, pod_data_dict: Dict[str, Any]
     ) -> None:
         """Fetch cumulative totals from external statistics."""
-        enable_supply_sensors = self.config.get(
-            CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-        )
-        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION]
-        if enable_supply_sensors:
-            enabled_sensor_types.append(SENSOR_TYPE_ACTUAL_SUPPLY)
+        # Always enable both consumption and supply sensors
+        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY]
 
         for pod_id, pod_data in pod_data_dict.items():
             pod_name_mapping = self.config.get("pod_name_mapping", {})
@@ -346,12 +336,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
     ) -> Dict[str, Dict[str, float]]:
         """Aggregate data for other (non-energy) sensors."""
         aggregated = {}
-        enable_supply_sensors = self.config.get(
-            CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-        )
-        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION]
-        if enable_supply_sensors:
-            enabled_sensor_types.append(SENSOR_TYPE_ACTUAL_SUPPLY)
+        # Always enable both consumption and supply sensors
+        enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY]
 
         for period_key, chart_data in chart_data_by_period.items():
             aggregated[period_key] = {}

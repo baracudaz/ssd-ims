@@ -18,10 +18,8 @@ from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_ENABLE_SUPPLY_SENSORS,
     CONF_POD_NAME_MAPPING,
     CONF_POINT_OF_DELIVERY,
-    DEFAULT_ENABLE_SUPPLY_SENSORS,
     DEFAULT_POINT_OF_DELIVERY,
     DOMAIN,
     PERIOD_YESTERDAY,
@@ -43,13 +41,9 @@ async def async_setup_entry(
 
     pod_ids = config_entry.data.get(CONF_POINT_OF_DELIVERY, DEFAULT_POINT_OF_DELIVERY)
     pod_name_mapping = config_entry.data.get(CONF_POD_NAME_MAPPING, {})
-    enable_supply_sensors = config_entry.data.get(
-        CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-    )
 
-    enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION]
-    if enable_supply_sensors:
-        enabled_sensor_types.append(SENSOR_TYPE_ACTUAL_SUPPLY)
+    # Always enable both consumption and supply sensors
+    enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY]
 
     sensors = []
     for pod_id in pod_ids:
