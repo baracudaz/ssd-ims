@@ -1,6 +1,6 @@
 # SSD IMS Home Assistant Integration
 
-A custom Home Assistant integration for gathering energy consumption and supply data from the SSD IMS portal (ims.ssd.sk) with automatic import into Home Assistant's long-term statistics for use in the Energy dashboard.
+A custom Home Assistant integration for gathering energy consumption and supply data from the Stredoslovenská distribučná SSD IMS portal (ims.ssd.sk) with automatic import into Home Assistant's long-term statistics for use in the Energy dashboard.
 
 ## Features
 
@@ -15,6 +15,7 @@ A custom Home Assistant integration for gathering energy consumption and supply 
 ## Data Characteristics
 
 **Data Freshness**: The SSD IMS portal provides day-old data that is published after midnight:
+
 - Data for the current day is not available
 - The most recent data available is from yesterday
 - Data is updated once daily after midnight
@@ -30,8 +31,6 @@ The integration creates **3 sensors per Point of Delivery**:
 | `sensor.<pod_name>_actual_consumption_yesterday` | Yesterday's total energy consumption (kWh) |
 | `sensor.<pod_name>_actual_supply_yesterday` | Yesterday's total energy supply/production (kWh) |
 | `sensor.<pod_name>_last_update` | Timestamp of last data update |
-
-**Note**: The yesterday sensors are disabled by default as the main value comes from the long-term statistics for the Energy dashboard.
 
 ## Long-Term Statistics
 
@@ -69,7 +68,7 @@ These statistics can be used directly in the Energy dashboard configuration.
 1. Go to **Settings** → **Devices & Services**
 2. Click **Add Integration**
 3. Search for "SSD IMS"
-4. **Step 1 - Credentials**: Enter your SSD IMS portal credentials (https://ims.ssd.sk)
+4. **Step 1 - Credentials**: Enter your SSD IMS portal credentials (<https://ims.ssd.sk>)
 5. **Step 2 - POD Selection**: Select which Points of Delivery to monitor
 6. **Step 3 - POD Names**: Set friendly names for your PODs (optional, e.g., your home address)
 7. **Step 4 - Data Import & Refresh**: Configure update interval and historical data import
@@ -159,7 +158,7 @@ ha-ssd-ims/
 ### Common Issues
 
 1. **Authentication Failed**
-   - Verify your username and password at https://ims.ssd.sk
+   - Verify your username and password at <https://ims.ssd.sk>
    - Ensure your account is active
 
 2. **No Data in Energy Dashboard**
@@ -207,6 +206,7 @@ This project is licensed under the AGPLv3 License - see the LICENSE file for det
 ## Changelog
 
 ### Version 2.0.0
+
 - **Breaking**: Simplified sensor structure - now creates 3 sensors per POD instead of 28
 - **New**: Direct import into Home Assistant's long-term statistics database
 - **New**: Energy dashboard ready out of the box
@@ -218,4 +218,5 @@ This project is licensed under the AGPLv3 License - see the LICENSE file for det
 - **Improved**: Slovak and English translations
 
 ### Version 1.x
+
 - Initial releases with multiple sensor types and time periods
