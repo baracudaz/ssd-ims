@@ -19,3 +19,4 @@ uv.lock
 scritps/
 config/
 .python-version
+dist/

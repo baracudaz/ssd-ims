@@ -110,14 +110,8 @@ To add SSD IMS data to your Energy dashboard:
 git clone <repository-url>
 cd ha-ssd-ims
 
-# Install dependencies
-make install
-
 # Start Home Assistant container
 make docker-up
-
-# Deploy integration
-make deploy
 
 # View logs
 make docker-logs
@@ -135,7 +129,7 @@ make test-coverage
 
 ### Project Structure
 
-```
+```shell
 ha-ssd-ims/
 ├── custom_components/ssd_ims/
 │   ├── __init__.py           # Main integration setup
