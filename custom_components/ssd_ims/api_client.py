@@ -1,6 +1,7 @@
 """API client for SSD IMS integration."""
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -101,23 +102,26 @@ class SsdImsApiClient:
                     # Extract session token from cookies
                     self._session_token = self._extract_session_token(response)
                     if self._session_token:
+                        token_hash = hashlib.sha256(self._session_token.encode("utf-8")).hexdigest()
                         _LOGGER.debug(
-                            f"Session token extracted: {self._session_token[:20]}..."
+                            "Session token extracted (hash=%s, length=%d)",
+                            token_hash[:8],
+                            len(self._session_token),
                         )
                     else:
                         _LOGGER.warning("No session token found in response cookies")
 
-                    _LOGGER.info(f"Authentication successful for user: {username}")
+                    _LOGGER.info("Authentication successful for user: %s", username)
                     return True
                 else:
-                    _LOGGER.error(f"Authentication failed: {response.status}")
+                    _LOGGER.error("Authentication failed: %s", response.status)
                     return False
 
         except ClientError as e:
-            _LOGGER.error(f"Network error during authentication: {e}")
+            _LOGGER.error("Network error during authentication: %s", e)
             return False
         except Exception as e:
-            _LOGGER.error(f"Unexpected error during authentication: {e}")
+            _LOGGER.error("Unexpected error during authentication: %s", e)
             return False
 
     def _extract_session_token(self, response) -> Optional[str]:
