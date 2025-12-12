@@ -327,11 +327,11 @@ class TestPodIdExtraction:
 class TestSsdImsSensor:
     """Test suite for SSD IMS sensor entities."""
 
-    def test_ssd_ims_yesterday_sensor_enabled_by_default(self):
-        """Ensure SsdImsYesterdaySensor is enabled by default in the entity registry."""
+    def test_ssd_ims_sensors_enabled_by_default_for_all_periods_and_types(self):
+        """Ensure SSD IMS sensors are enabled by default for all periods and sensor types."""
         from custom_components.ssd_ims.sensor import SsdImsYesterdaySensor
 
-        # Create a mock coordinator
+        # Create a mock coordinator with minimal structure for all periods
         mock_coordinator = MagicMock()
         mock_coordinator.data = {
             "pod_id_123": {
@@ -341,15 +341,19 @@ class TestSsdImsSensor:
             }
         }
 
-        # Instantiate the sensor
-        sensor = SsdImsYesterdaySensor(
-            coordinator=mock_coordinator,
-            sensor_type="actual_consumption",
-            period="yesterday",
-            pod_id="pod_id_123",
-            friendly_name="Home",
-        )
+        pod_id = "pod_id_123"
+        periods = ("yesterday",)
+        sensor_types = ("actual_consumption", "actual_supply")
 
-        # Assert that the sensor is enabled by default
-        assert sensor.entity_registry_enabled_default is True
+        for period in periods:
+            for sensor_type in sensor_types:
+                sensor = SsdImsYesterdaySensor(
+                    coordinator=mock_coordinator,
+                    sensor_type=sensor_type,
+                    period=period,
+                    pod_id=pod_id,
+                    friendly_name="Home",
+                )
+
+                assert sensor.entity_registry_enabled_default is True
 

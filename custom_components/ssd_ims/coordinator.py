@@ -41,10 +41,10 @@ from .models import ChartData, PointOfDelivery
 _LOGGER = logging.getLogger(__name__)
 
 # Sensor types that are always enabled for statistics import
-ENABLED_SENSOR_TYPES: list[str] = [
+ENABLED_SENSOR_TYPES: tuple[str, ...] = (
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
-]
+)
 
 
 def _sanitize_name(name: str) -> str:

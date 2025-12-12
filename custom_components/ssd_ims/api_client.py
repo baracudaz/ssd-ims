@@ -1,7 +1,6 @@
 """API client for SSD IMS integration."""
 
 import asyncio
-import hashlib
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -102,10 +101,8 @@ class SsdImsApiClient:
                     # Extract session token from cookies
                     self._session_token = self._extract_session_token(response)
                     if self._session_token:
-                        token_hash = hashlib.sha256(self._session_token.encode("utf-8")).hexdigest()
                         _LOGGER.debug(
-                            "Session token extracted (hash=%s, length=%d)",
-                            token_hash[:8],
+                            "Session token extracted (length=%d)",
                             len(self._session_token),
                         )
                     else:
