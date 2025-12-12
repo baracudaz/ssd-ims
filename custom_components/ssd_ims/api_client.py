@@ -395,7 +395,9 @@ class SsdImsApiClient:
 
             # Validate that we have the expected data structure
             if not isinstance(data, dict):
-                _LOGGER.error(f"Chart data response is not a dictionary: {type(data).__name__}")
+                _LOGGER.error(
+                    f"Chart data response is not a dictionary: {type(data).__name__}"
+                )
                 raise Exception("Invalid chart data response format")
 
             # Check if we have any data

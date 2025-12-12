@@ -356,4 +356,3 @@ class TestSsdImsSensor:
                 )
 
                 assert sensor.entity_registry_enabled_default is True
-
