@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "SSD IMS Configuration",
-        "description": "Enter your portal credentials https://ims.ssd.sk",
+        "description": "Enter your portal credentials for SSD IMS to gain access to your energy consumption data.",
         "data": {
           "username": "Username",
           "password": "Password"
