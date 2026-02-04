@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Konfigurácia SSD IMS",
-        "description": "Zadajte prihlasovacie údaje do portálu https://ims.ssd.sk",
+        "description": "Zadajte prihlasovacie údaje do portálu SSD IMS na získanie prístupu k vašim údajom o spotrebe energie.",
         "data": {
           "username": "Používateľské meno",
           "password": "Heslo"
