@@ -1,7 +1,7 @@
 """Constants for SSD IMS integration."""
 
-from datetime import datetime, timedelta
-from typing import Final, Tuple
+from datetime import timedelta
+from typing import Final
 
 # Domain
 DOMAIN: Final = "ssd_ims"
@@ -38,6 +38,9 @@ SCAN_INTERVAL_OPTIONS: Final = {
 API_DELAY_MIN: Final = 1  # minimum random delay in seconds
 API_DELAY_MAX: Final = 3  # maximum random delay in seconds
 
+# POD cache TTL
+PODS_CACHE_TTL: Final = timedelta(minutes=5)
+
 # API endpoints
 API_BASE_URL: Final = "https://ims.ssd.sk/api"
 API_LOGIN: Final = f"{API_BASE_URL}/account/login"
@@ -56,29 +59,10 @@ SENSOR_TYPES: Final = [
     SENSOR_TYPE_ACTUAL_SUPPLY,
 ]
 
-
-# Date range calculation callbacks
-def _calculate_yesterday_range(now: datetime) -> Tuple[datetime, datetime]:
-    """
-    Calculate date range for yesterday (previous day).
-
-    The API expects:
-    - validFromDate: midnight of the requested day in local timezone (e.g., 2025-11-28T00:00:00+01:00)
-    - validToDate: 23:00 UTC of the same day (e.g., 2025-11-28T23:00:00Z), which equals midnight local time
-    """
-    # Get today at midnight in local timezone
-    today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    # Yesterday at midnight in local timezone (start of the day we want)
-    period_start = today_midnight - timedelta(days=1)
-
-    # End time: today's midnight converted to UTC
-    # In +01:00 timezone, 2025-11-29T00:00:00+01:00 = 2025-11-28T23:00:00Z
-    from datetime import timezone
-
-    period_end = today_midnight.astimezone(timezone.utc)
-
-    return period_start, period_end
+SENSOR_TYPE_LABELS: Final = {
+    SENSOR_TYPE_ACTUAL_CONSUMPTION: "Actual Consumption",
+    SENSOR_TYPE_ACTUAL_SUPPLY: "Actual Supply",
+}
 
 
 # Time periods configuration

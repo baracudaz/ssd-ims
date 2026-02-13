@@ -1,7 +1,6 @@
 """Configuration flow for SSD IMS integration."""
 
 import logging
-import re
 from typing import Any, Dict, List, Optional
 
 import voluptuous as vol
@@ -28,6 +27,7 @@ from .const import (
     POD_NAME_MAX_LENGTH,
     SCAN_INTERVAL_OPTIONS,
 )
+from .helpers import sanitize_name
 from .models import PointOfDelivery
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,8 +92,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            selected_pods = user_input.get("selected_pods", [])
-            if not selected_pods:
+            if not (selected_pods := user_input.get("selected_pods", [])):
                 errors["base"] = "no_pods_selected"
             else:
                 self._selected_pods = selected_pods
@@ -135,24 +134,13 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             # Process POD names using stable pod.id
             for pod_id in self._selected_pods:
-                display_name = user_input.get(f"pod_name_{pod_id}", "").strip()
-
-                if display_name:
+                if display_name := user_input.get(f"pod_name_{pod_id}", "").strip():
                     # Check length before sanitization
                     if len(display_name) > POD_NAME_MAX_LENGTH:
                         errors[f"pod_name_{pod_id}"] = "too_long"
                         continue
 
-                    # Sanitize the display name to create entity-safe name
-                    # Replace spaces and special characters with underscores
-                    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", display_name)
-                    # Remove multiple consecutive underscores
-                    sanitized = re.sub(r"_+", "_", sanitized)
-                    # Remove leading/trailing underscores
-                    sanitized = sanitized.strip("_")
-
-                    # Convert to lowercase for entity ID
-                    sanitized_lower = sanitized.lower()
+                    sanitized_lower = sanitize_name(display_name)
 
                     # Check if sanitized name is empty
                     if not sanitized_lower:
@@ -176,8 +164,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema_fields = {}
         for pod_id in self._selected_pods:
             # Find pod by stable ID
-            pod = next((p for p in self._pods if p.id == pod_id), None)
-            if pod:
+            if pod := next((p for p in self._pods if p.id == pod_id), None):
                 schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
 
         return self.async_show_form(
@@ -192,8 +179,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         info_lines = []
         for pod_id in self._selected_pods:
             # Find pod by stable ID
-            pod = next((p for p in self._pods if p.id == pod_id), None)
-            if pod:
+            if pod := next((p for p in self._pods if p.id == pod_id), None):
                 info_lines.append(f"• {pod.text} → {pod_id}")
         return "\n".join(info_lines)
 
@@ -278,11 +264,7 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
             )
 
             # Update coordinator configuration and trigger refresh if needed
-            from .coordinator import SsdImsDataCoordinator
-
-            coordinator: SsdImsDataCoordinator = self.hass.data[DOMAIN][
-                self.config_entry.entry_id
-            ]
+            coordinator = self.config_entry.runtime_data
             await coordinator.update_config(new_data)
 
             return self.async_create_entry(title="", data={})

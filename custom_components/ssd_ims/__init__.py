@@ -2,11 +2,10 @@
 
 import logging
 import re
-
-from aiohttp import ClientSession
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api_client import SsdImsApiClient
 from .const import (
@@ -17,22 +16,32 @@ from .const import (
     DEFAULT_HISTORY_DAYS,
     DEFAULT_POINT_OF_DELIVERY,
     DEFAULT_SCAN_INTERVAL,
-    DOMAIN,
 )
 from .coordinator import SsdImsDataCoordinator
+from .models import PointOfDelivery
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["sensor"]
 
+type SsdImsConfigEntry = ConfigEntry[SsdImsDataCoordinator]
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+
+async def _async_get_pods(
+    hass: HomeAssistant, username: str, password: str
+) -> list[PointOfDelivery] | None:
+    """Authenticate and fetch PODs for migration."""
+    api_client = SsdImsApiClient(async_get_clientsession(hass))
+
+    if not await api_client.authenticate(username, password):
+        return None
+
+    return await api_client.get_points_of_delivery()
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: SsdImsConfigEntry) -> bool:
     """Set up SSD IMS from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
-
-    # Create API client
-    session = ClientSession()
-    api_client = SsdImsApiClient(session)
+    api_client = SsdImsApiClient(async_get_clientsession(hass))
 
     # Authenticate
     username = entry.data[CONF_USERNAME]
@@ -40,7 +49,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if not await api_client.authenticate(username, password):
         _LOGGER.error("Failed to authenticate with SSD IMS")
-        await session.close()
         return False
 
     # Create coordinator
@@ -57,8 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = SsdImsDataCoordinator(hass, api_client, config, entry)
 
-    # Store coordinator
-    hass.data[DOMAIN][entry.entry_id] = coordinator
+    entry.runtime_data = coordinator
 
     # Load platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -69,17 +76,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: SsdImsConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        coordinator: SsdImsDataCoordinator = hass.data[DOMAIN][entry.entry_id]
-
-        # Close API client session
-        if hasattr(coordinator.api_client, "_session"):
-            await coordinator.api_client._session.close()
-
-        # Remove coordinator
-        hass.data[DOMAIN].pop(entry.entry_id)
+        entry.runtime_data = None
 
     return unload_ok
 
@@ -97,17 +97,13 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.info("Migrating from session POD IDs to stable POD IDs")
 
             # Create API client to discover PODs
-            session = ClientSession()
-            api_client = SsdImsApiClient(session)
-
             try:
                 # Authenticate to get PODs
                 username = data[CONF_USERNAME]
                 password = data[CONF_PASSWORD]
 
-                if await api_client.authenticate(username, password):
-                    # Get current PODs
-                    pods = await api_client.get_points_of_delivery()
+                pods = await _async_get_pods(hass, username, password)
+                if pods is not None:
                     pod_mapping = {}  # session_id -> stable_id
 
                     for pod in pods:
@@ -153,25 +149,19 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as e:
                 _LOGGER.error(f"Error during configuration migration: {e}")
                 return False
-            finally:
-                await session.close()
 
         # Also check for POD texts that need to be converted to stable IDs
         elif point_of_delivery:
             _LOGGER.debug("Checking for POD text to stable ID conversion")
 
             # Create API client to discover PODs
-            session = ClientSession()
-            api_client = SsdImsApiClient(session)
-
             try:
                 # Authenticate to get PODs
                 username = data[CONF_USERNAME]
                 password = data[CONF_PASSWORD]
 
-                if await api_client.authenticate(username, password):
-                    # Get current PODs
-                    pods = await api_client.get_points_of_delivery()
+                pods = await _async_get_pods(hass, username, password)
+                if pods is not None:
                     pod_text_to_id = {}  # text -> stable_id
 
                     for pod in pods:
@@ -255,8 +245,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as e:
                 _LOGGER.error(f"Error during POD text to stable ID conversion: {e}")
                 # Don't fail the migration for this, just log the error
-            finally:
-                await session.close()
 
         return True
 

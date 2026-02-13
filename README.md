@@ -196,21 +196,3 @@ This project is licensed under the AGPLv3 License - see the LICENSE file for det
 2. Create a feature branch
 3. Make your changes with tests
 4. Submit a pull request
-
-## Changelog
-
-### Version 2.0.0
-
-- **Breaking**: Simplified sensor structure - now creates 3 sensors per POD instead of 28
-- **New**: Direct import into Home Assistant's long-term statistics database
-- **New**: Energy dashboard ready out of the box
-- **New**: Historical data import during initial setup
-- **New**: Improved 4-step configuration flow
-- **Removed**: Multiple time period sensors (replaced by statistics)
-- **Removed**: Idle/reactive power sensors
-- **Removed**: Supply sensor toggle (always enabled)
-- **Improved**: Slovak and English translations
-
-### Version 1.x
-
-- Initial releases with multiple sensor types and time periods
