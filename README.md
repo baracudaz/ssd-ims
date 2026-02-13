@@ -2,6 +2,8 @@
 
 A custom Home Assistant integration for gathering energy consumption and supply data from the Stredoslovenská distribučná SSD IMS portal (ims.ssd.sk) with automatic import into Home Assistant's long-term statistics for use in the Energy dashboard.
 
+![Energy dashboard usage](artifacts/screenshots/energy-usage.png)
+
 ## Features
 
 - **Energy Statistics Import**: Automatically imports historical and daily energy data into Home Assistant's statistics database
@@ -99,16 +101,16 @@ To add SSD IMS data to your Energy dashboard:
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.13+
 - Docker and Docker Compose
-- Home Assistant 2024.1+
+- Home Assistant 2026.2+
 
 ### Setup Development Environment
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd ha-ssd-ims
+git https://github.com/baracudaz/ssd-ims.git
+cd ssd-ims
 
 # Start Home Assistant container
 make docker-up
@@ -125,26 +127,6 @@ make test
 
 # Run with coverage
 make test-coverage
-```
-
-### Project Structure
-
-```shell
-ha-ssd-ims/
-├── custom_components/ssd_ims/
-│   ├── __init__.py           # Main integration setup
-│   ├── api_client.py         # SSD IMS API client
-│   ├── config_flow.py        # Configuration UI flow
-│   ├── coordinator.py        # Data update coordinator
-│   ├── sensor.py             # Sensor entities
-│   ├── models.py             # Data models
-│   ├── const.py              # Constants and configuration
-│   ├── manifest.json         # Integration manifest
-│   └── translations/         # UI translations (EN, SK)
-├── tests/                    # Test suite
-├── config/                   # Home Assistant dev config
-├── docker-compose.yml        # Development environment
-└── Makefile                  # Development commands
 ```
 
 ## Troubleshooting

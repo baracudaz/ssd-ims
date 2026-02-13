@@ -1,6 +1,6 @@
 """Test suite for SSD IMS API client."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -66,6 +66,8 @@ class TestSsdImsApiClient:
                 mock_response = AsyncMock()
                 mock_response.json = AsyncMock(return_value=mock_auth_response)
                 mock_response.status = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.cookies = {}
                 mock_post.return_value.__aenter__.return_value = mock_response
 
                 result = await api_client.authenticate("test_user", "test_pass")
@@ -79,6 +81,8 @@ class TestSsdImsApiClient:
             with patch.object(api_client._session, "post") as mock_post:
                 mock_response = AsyncMock()
                 mock_response.status = 401
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.cookies = {}
                 mock_post.return_value.__aenter__.return_value = mock_response
 
                 result = await api_client.authenticate("invalid", "invalid")
@@ -103,11 +107,12 @@ class TestSsdImsApiClient:
             """Test successful POD retrieval."""
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
+            with patch.object(api_client._session, "request") as mock_request:
                 mock_response = AsyncMock()
                 mock_response.json = AsyncMock(return_value=mock_pods_response)
                 mock_response.status = 200
-                mock_get.return_value.__aenter__.return_value = mock_response
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 pods = await api_client.get_points_of_delivery()
 
@@ -119,11 +124,12 @@ class TestSsdImsApiClient:
             """Test handling of empty POD response."""
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
+            with patch.object(api_client._session, "request") as mock_request:
                 mock_response = AsyncMock()
                 mock_response.json = AsyncMock(return_value=[])
                 mock_response.status = 200
-                mock_get.return_value.__aenter__.return_value = mock_response
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 pods = await api_client.get_points_of_delivery()
 
@@ -134,6 +140,7 @@ class TestSsdImsApiClient:
             with patch.object(api_client._session, "get") as mock_get:
                 mock_response = AsyncMock()
                 mock_response.status = 401
+                mock_response.headers = {"content-type": "application/json"}
                 mock_get.return_value.__aenter__.return_value = mock_response
 
                 with pytest.raises(Exception):
@@ -151,11 +158,19 @@ class TestSsdImsApiClient:
             from_date = datetime(2025, 1, 20, 0, 0)
             to_date = datetime(2025, 1, 20, 23, 59)
 
-            with patch.object(api_client._session, "post") as mock_post:
+            pod_mock = MagicMock()
+            pod_mock.id = pod_id
+            pod_mock.value = "test_pod_id"
+            pod_mock.text = "99XXX1234560000G (Rodinný dom)"
+            api_client._pods_cache = [pod_mock]
+            api_client._pods_cache_ts = datetime.now(UTC)
+
+            with patch.object(api_client._session, "request") as mock_request:
                 mock_response = AsyncMock()
                 mock_response.json = AsyncMock(return_value=mock_chart_response)
                 mock_response.status = 200
-                mock_post.return_value.__aenter__.return_value = mock_response
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 chart_data = await api_client.get_chart_data(pod_id, from_date, to_date)
 
@@ -170,6 +185,13 @@ class TestSsdImsApiClient:
             pod_id = "99XXX1234560000G"
             from_date = datetime(2025, 1, 20, 0, 0)
             to_date = datetime(2025, 1, 20, 23, 59)
+
+            pod_mock = MagicMock()
+            pod_mock.id = pod_id
+            pod_mock.value = "test_pod_id"
+            pod_mock.text = "99XXX1234560000G (Rodinný dom)"
+            api_client._pods_cache = [pod_mock]
+            api_client._pods_cache_ts = datetime.now(UTC)
 
             response_with_nones = {
                 "meteringDatetime": [
@@ -186,17 +208,19 @@ class TestSsdImsApiClient:
                 "sumIdleSupply": 42.7910,
             }
 
-            with patch.object(api_client._session, "post") as mock_post:
+            with patch.object(api_client._session, "request") as mock_request:
                 mock_response = AsyncMock()
                 mock_response.json = AsyncMock(return_value=response_with_nones)
                 mock_response.status = 200
-                mock_post.return_value.__aenter__.return_value = mock_response
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 chart_data = await api_client.get_chart_data(pod_id, from_date, to_date)
 
-                assert len(chart_data.actual_consumption) == 2
+                assert len(chart_data.actual_consumption) == 1
                 assert chart_data.actual_consumption[0] == 0.1320
-                assert chart_data.actual_consumption[1] is None
+                assert len(chart_data.actual_supply) == 1
+                assert chart_data.actual_supply[0] == 0.5
 
     class TestErrorHandling:
         """Test error handling scenarios."""
@@ -205,10 +229,11 @@ class TestSsdImsApiClient:
             """Test handling of session timeouts."""
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
+            with patch.object(api_client._session, "request") as mock_request:
                 mock_response = AsyncMock()
                 mock_response.status = 408
-                mock_get.return_value.__aenter__.return_value = mock_response
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 with pytest.raises(Exception):
                     await api_client.get_points_of_delivery()
@@ -217,10 +242,11 @@ class TestSsdImsApiClient:
             """Test handling of rate limiting responses."""
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
+            with patch.object(api_client._session, "request") as mock_request:
                 mock_response = AsyncMock()
                 mock_response.status = 429
-                mock_get.return_value.__aenter__.return_value = mock_response
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 with pytest.raises(Exception):
                     await api_client.get_points_of_delivery()
@@ -229,10 +255,11 @@ class TestSsdImsApiClient:
             """Test handling of server errors."""
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
+            with patch.object(api_client._session, "request") as mock_request:
                 mock_response = AsyncMock()
                 mock_response.status = 500
-                mock_get.return_value.__aenter__.return_value = mock_response
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 with pytest.raises(Exception):
                     await api_client.get_points_of_delivery()
@@ -311,11 +338,12 @@ class TestPodIdExtraction:
             {"text": "99YYY9876540000G (Garáž)", "value": "session_token_456"},
         ]
 
-        with patch.object(api_client._session, "get") as mock_get:
+        with patch.object(api_client._session, "request") as mock_request:
             mock_response = AsyncMock()
             mock_response.json = AsyncMock(return_value=mock_response_data)
             mock_response.status = 200
-            mock_get.return_value.__aenter__.return_value = mock_response
+            mock_response.headers = {"content-type": "application/json"}
+            mock_request.return_value.__aenter__.return_value = mock_response
 
             pods = await api_client.get_points_of_delivery()
 

@@ -164,7 +164,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema_fields = {}
         for pod_id in self._selected_pods:
             # Find pod by stable ID
-            if pod := next((p for p in self._pods if p.id == pod_id), None):
+            if next((p for p in self._pods if p.id == pod_id), None) is not None:
                 schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
 
         return self.async_show_form(

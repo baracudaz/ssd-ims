@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
@@ -258,7 +258,7 @@ class SsdImsApiClient:
             )
             pods = [PointOfDelivery(**pod) for pod in data]
             self._pods_cache = pods
-            self._pods_cache_ts = datetime.utcnow()
+            self._pods_cache_ts = datetime.now(UTC)
             _LOGGER.debug(f"Retrieved {len(pods)} points of delivery")
             return pods
 
@@ -470,7 +470,7 @@ class SsdImsApiClient:
         """Return True when the cached POD list is still valid."""
         if not self._pods_cache or not self._pods_cache_ts:
             return False
-        return datetime.utcnow() - self._pods_cache_ts <= PODS_CACHE_TTL
+        return datetime.now(UTC) - self._pods_cache_ts <= PODS_CACHE_TTL
 
     async def _get_cached_pods(self) -> List[PointOfDelivery]:
         """Return cached PODs when fresh, otherwise fetch from API."""
@@ -478,9 +478,7 @@ class SsdImsApiClient:
             return self._pods_cache
         return await self.get_points_of_delivery()
 
-    async def _get_pod_by_stable_id(
-        self, pod_id: str
-    ) -> Optional[PointOfDelivery]:
+    async def _get_pod_by_stable_id(self, pod_id: str) -> Optional[PointOfDelivery]:
         """Return POD details by stable ID."""
         pods = await self._get_cached_pods()
         return next((pod for pod in pods if pod.id == pod_id), None)
