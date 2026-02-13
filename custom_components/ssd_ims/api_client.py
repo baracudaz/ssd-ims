@@ -2,13 +2,13 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
 from pydantic import ValidationError
 
-from .const import API_CHART, API_DATA, API_LOGIN, API_PODS
+from .const import API_CHART, API_DATA, API_LOGIN, API_PODS, PODS_CACHE_TTL
 from .models import (
     AuthResponse,
     ChartData,
@@ -46,13 +46,11 @@ def _log_data_sample(
             problems.append(i)
 
     sample_info = f"length={total_len}"
+    # Show a small sample around problematic areas
     if problems:
         sample_info += f", problems_at={problems[:10]}"
         if len(problems) > 10:
             sample_info += f"+{len(problems) - 10}more"
-
-    # Show a small sample around problematic areas
-    if problems:
         sample_ranges = []
         for prob_idx in problems[:3]:  # Show first 3 problem areas
             start = max(0, prob_idx - 2)
@@ -80,6 +78,8 @@ class SsdImsApiClient:
         self._timeout = ClientTimeout(total=60)  # Increase timeout for slow API
         self._username: Optional[str] = None
         self._password: Optional[str] = None
+        self._pods_cache: Optional[List[PointOfDelivery]] = None
+        self._pods_cache_ts: Optional[datetime] = None
 
     async def authenticate(self, username: str, password: str) -> bool:
         """Authenticate with SSD IMS portal."""
@@ -126,11 +126,10 @@ class SsdImsApiClient:
         try:
             cookies = response.cookies
             # aiohttp returns cookies as a SimpleCookie object
-            if hasattr(cookies, "get"):
-                # Try to get the SsdAccessToken cookie directly
-                ssd_token_cookie = cookies.get("SsdAccessToken")
-                if ssd_token_cookie:
-                    return ssd_token_cookie.value
+            if hasattr(cookies, "get") and (
+                ssd_token_cookie := cookies.get("SsdAccessToken")
+            ):
+                return ssd_token_cookie.value
             return None
         except Exception as e:
             _LOGGER.error(f"Error extracting session token: {e}")
@@ -194,7 +193,7 @@ class SsdImsApiClient:
             raise Exception("Not authenticated")
 
         # Add required headers for SSD IMS API compatibility
-        headers = kwargs.get("headers", {})
+        headers = dict(kwargs.get("headers", {}))
         headers["X-Requested-With"] = "XMLHttpRequest"
         # Add accept header to ensure JSON response
         headers["Accept"] = "application/json, text/plain, */*"
@@ -258,6 +257,8 @@ class SsdImsApiClient:
                 f"POD API response type: {type(data).__name__}, length: {len(data) if isinstance(data, list) else 'N/A'}"
             )
             pods = [PointOfDelivery(**pod) for pod in data]
+            self._pods_cache = pods
+            self._pods_cache_ts = datetime.now(UTC)
             _LOGGER.debug(f"Retrieved {len(pods)} points of delivery")
             return pods
 
@@ -359,13 +360,7 @@ class SsdImsApiClient:
 
         try:
             # Efficiently get session_pod_id and pod_text in one go
-            pods = await self.get_points_of_delivery()
-            target_pod = None
-            for pod in pods:
-                if pod.id == pod_id:
-                    target_pod = pod
-                    break
-
+            target_pod = await self._get_pod_by_stable_id(pod_id)
             if not target_pod:
                 raise Exception(f"POD not found for stable ID: {pod_id}")
 
@@ -466,13 +461,32 @@ class SsdImsApiClient:
         """Get current POD ID for a given pod_text (label)."""
         try:
             pods = await self.get_points_of_delivery()
-            for pod in pods:
-                if pod.text == pod_text:
-                    return pod.value
-            return None
+            return next((pod.value for pod in pods if pod.text == pod_text), None)
         except Exception as e:
             _LOGGER.error(f"Error getting POD ID for text {pod_text}: {e}")
             return None
+
+    def _is_pods_cache_valid(self) -> bool:
+        """Return True when the cached POD list is still valid."""
+        if not self._pods_cache or not self._pods_cache_ts:
+            return False
+        return datetime.now(UTC) - self._pods_cache_ts <= PODS_CACHE_TTL
+
+    async def _get_cached_pods(self) -> List[PointOfDelivery]:
+        """Return cached PODs when fresh, otherwise fetch from API."""
+        if self._is_pods_cache_valid():
+            return self._pods_cache
+        return await self.get_points_of_delivery()
+
+    async def _get_pod_by_stable_id(self, pod_id: str) -> Optional[PointOfDelivery]:
+        """Return POD details by stable ID."""
+        pods = await self._get_cached_pods()
+        return next((pod for pod in pods if pod.id == pod_id), None)
+
+    async def _get_session_pod_id_by_stable_id(self, pod_id: str) -> Optional[str]:
+        """Get current session POD ID for a stable POD ID."""
+        target_pod = await self._get_pod_by_stable_id(pod_id)
+        return target_pod.value if target_pod else None
 
     @property
     def is_authenticated(self) -> bool:

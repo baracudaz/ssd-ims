@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import random
-import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
@@ -28,14 +27,15 @@ from .const import (
     API_DELAY_MIN,
     CONF_HISTORY_DAYS,
     CONF_POINT_OF_DELIVERY,
+    CONF_SCAN_INTERVAL,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     PERIOD_YESTERDAY,
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
-    _calculate_yesterday_range,
 )
+from .helpers import calculate_yesterday_range, sanitize_name
 from .models import ChartData, PointOfDelivery
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,13 +45,6 @@ ENABLED_SENSOR_TYPES: tuple[str, ...] = (
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
 )
-
-
-def _sanitize_name(name: str) -> str:
-    """Sanitize name for use in entity IDs."""
-    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    sanitized = re.sub(r"_+", "_", sanitized)
-    return sanitized.strip("_")
 
 
 class SsdImsDataCoordinator(DataUpdateCoordinator):
@@ -71,15 +64,21 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         self.pods: Dict[str, PointOfDelivery] = {}
 
         scan_interval = timedelta(
-            minutes=config.get("scan_interval", DEFAULT_SCAN_INTERVAL)
+            minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         )
-        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=scan_interval)
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=scan_interval,
+            config_entry=entry,
+        )
 
     async def update_config(self, new_config: Dict[str, Any]) -> None:
         """Update coordinator configuration."""
         self.config = new_config
         new_interval = timedelta(
-            minutes=new_config.get("scan_interval", DEFAULT_SCAN_INTERVAL)
+            minutes=new_config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         )
         if self.update_interval != new_interval:
             self.update_interval = new_interval
@@ -113,7 +112,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
                 chart_data_by_period = {}
                 try:
-                    period_start, period_end = _calculate_yesterday_range(now)
+                    period_start, period_end = calculate_yesterday_range(now)
                     chart_data_by_period[
                         PERIOD_YESTERDAY
                     ] = await self.api_client.get_chart_data(
@@ -164,12 +163,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             pod_name = pod_name_mapping.get(pod_id, pod_id)
 
             for sensor_type in enabled_sensor_types:
-                statistic_type_names = {
-                    SENSOR_TYPE_ACTUAL_CONSUMPTION: "actual_consumption",
-                    SENSOR_TYPE_ACTUAL_SUPPLY: "actual_supply",
-                }
-                statistic_type = statistic_type_names.get(sensor_type)
-                sanitized_friendly_name = _sanitize_name(pod_name)
+                statistic_type = sensor_type
+                sanitized_friendly_name = sanitize_name(pod_name)
                 statistic_name = f"{sanitized_friendly_name}_{statistic_type}".lower()
                 statistic_id = f"{DOMAIN}:{statistic_name}"
 
@@ -193,8 +188,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 if last_stats_result and statistic_id in last_stats_result:
                     last_stat = last_stats_result[statistic_id][0]
                     cumulative_sum = last_stat.get("sum") or 0.0
-                    start_val = last_stat.get("start")
-                    if start_val:
+                    if start_val := last_stat.get("start"):
                         if isinstance(start_val, (int, float)):
                             start_val = dt_util.utc_from_timestamp(start_val)
                         last_stat_timestamp = dt_util.as_local(start_val)
@@ -301,12 +295,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 pod_data["cumulative_totals"] = {}
 
             for sensor_type in enabled_sensor_types:
-                statistic_type_names = {
-                    SENSOR_TYPE_ACTUAL_CONSUMPTION: "actual_consumption",
-                    SENSOR_TYPE_ACTUAL_SUPPLY: "actual_supply",
-                }
-                statistic_type = statistic_type_names.get(sensor_type, sensor_type)
-                sanitized_friendly_name = _sanitize_name(pod_name)
+                statistic_type = sensor_type
+                sanitized_friendly_name = sanitize_name(pod_name)
                 statistic_name = f"{sanitized_friendly_name}_{statistic_type}".lower()
                 statistic_id = f"{DOMAIN}:{statistic_name}"
 

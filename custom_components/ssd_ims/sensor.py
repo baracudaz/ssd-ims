@@ -1,7 +1,6 @@
 """Sensor platform for SSD IMS integration."""
 
 import logging
-import re
 from datetime import datetime
 from typing import Optional
 
@@ -24,7 +23,9 @@ from .const import (
     PERIOD_YESTERDAY,
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
+    SENSOR_TYPE_LABELS,
 )
+from .helpers import sanitize_name
 from .coordinator import SsdImsDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up SSD IMS sensors from config entry."""
-    coordinator: SsdImsDataCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator: SsdImsDataCoordinator = config_entry.runtime_data
 
     pod_ids = config_entry.data.get(CONF_POINT_OF_DELIVERY, DEFAULT_POINT_OF_DELIVERY)
     pod_name_mapping = config_entry.data.get(CONF_POD_NAME_MAPPING, {})
@@ -48,26 +49,18 @@ async def async_setup_entry(
     for pod_id in pod_ids:
         friendly_name = pod_name_mapping.get(pod_id, pod_id)
         sensors.append(SsdImsLastUpdateSensor(coordinator, pod_id, friendly_name))
-
-        for sensor_type in enabled_sensor_types:
-            sensors.append(
-                SsdImsYesterdaySensor(
-                    coordinator,
-                    sensor_type,
-                    PERIOD_YESTERDAY,
-                    pod_id,
-                    friendly_name,
-                )
+        sensors.extend(
+            SsdImsYesterdaySensor(
+                coordinator,
+                sensor_type,
+                PERIOD_YESTERDAY,
+                pod_id,
+                friendly_name,
             )
+            for sensor_type in enabled_sensor_types
+        )
 
     async_add_entities(sensors)
-
-
-def _sanitize_name(name: str) -> str:
-    """Sanitize name for use in sensor names."""
-    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    sanitized = re.sub(r"_+", "_", sanitized)
-    return sanitized.strip("_")
 
 
 class SsdImsSensor(SensorEntity):
@@ -134,11 +127,7 @@ class SsdImsEnergySensor(SsdImsSensor):
 
     def _generate_sensor_name(self, suffix: str) -> str:
         """Generate sensor name based on type and suffix."""
-        type_names = {
-            SENSOR_TYPE_ACTUAL_CONSUMPTION: "Actual Consumption",
-            SENSOR_TYPE_ACTUAL_SUPPLY: "Actual Supply",
-        }
-        type_name = type_names.get(self.sensor_type, "Energy")
+        type_name = SENSOR_TYPE_LABELS.get(self.sensor_type, "Energy")
         return f"{type_name} {suffix}"
 
 
@@ -159,7 +148,7 @@ class SsdImsYesterdaySensor(SsdImsEnergySensor):
         super().__init__(coordinator, sensor_type, period, pod_id, friendly_name)
 
         sensor_name = self._generate_sensor_name("Yesterday")
-        sanitized_sensor_name = _sanitize_name(sensor_name)
+        sanitized_sensor_name = sanitize_name(sensor_name)
         self._attr_unique_id = f"{pod_id}_{sanitized_sensor_name}_{sensor_type}"
         self._setup_entity_naming(sensor_name)
 
@@ -191,7 +180,7 @@ class SsdImsLastUpdateSensor(SsdImsSensor):
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
 
         sensor_name = "Last Update"
-        sanitized_sensor_name = _sanitize_name(sensor_name)
+        sanitized_sensor_name = sanitize_name(sensor_name)
         self._attr_unique_id = f"{pod_id}_{sanitized_sensor_name}"
         self._setup_entity_naming(sensor_name)
 

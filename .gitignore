@@ -20,3 +20,4 @@ scritps/
 config/
 .python-version
 dist/
+.ruff_cache/

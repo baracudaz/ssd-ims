@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator, ValidationInfo
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 class UserProfile(BaseModel):
@@ -206,5 +206,4 @@ class AggregatedData(BaseModel):
     """
 
     # Allow arbitrary fields for dynamic time periods
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
