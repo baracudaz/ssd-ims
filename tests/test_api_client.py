@@ -268,9 +268,19 @@ class TestSsdImsApiClient:
         """Test session management functionality."""
 
         async def test_session_expiration_detection(self, api_client):
-            """Test detection of session expiration."""
+            """Test detection of session expiration via HTML content type."""
             mock_response = MagicMock()
+            mock_response.status = 200
             mock_response.headers = {"content-type": "text/html; charset=utf-8"}
+
+            result = api_client._is_session_expired(mock_response)
+            assert result is True
+
+        async def test_session_expiration_detection_401(self, api_client):
+            """Test detection of session expiration via 401 status."""
+            mock_response = MagicMock()
+            mock_response.status = 401
+            mock_response.headers = {"content-type": "application/json"}
 
             result = api_client._is_session_expired(mock_response)
             assert result is True
@@ -278,6 +288,7 @@ class TestSsdImsApiClient:
         async def test_session_not_expired(self, api_client):
             """Test detection when session is still valid."""
             mock_response = MagicMock()
+            mock_response.status = 200
             mock_response.headers = {"content-type": "application/json"}
 
             result = api_client._is_session_expired(mock_response)

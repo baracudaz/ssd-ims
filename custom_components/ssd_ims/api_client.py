@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
 from pydantic import ValidationError
@@ -21,7 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _log_data_sample(
-    data: Dict[str, Any], field_name: str, max_sample_size: int = 20
+    data: dict[str, Any], field_name: str, max_sample_size: int = 20
 ) -> str:
     """Create a debug-friendly sample of problematic data."""
     if field_name not in data:
@@ -74,12 +74,12 @@ class SsdImsApiClient:
         """Initialize API client."""
         self._session = session
         self._authenticated = False
-        self._session_token: Optional[str] = None
+        self._session_token: str | None = None
         self._timeout = ClientTimeout(total=60)  # Increase timeout for slow API
-        self._username: Optional[str] = None
-        self._password: Optional[str] = None
-        self._pods_cache: Optional[List[PointOfDelivery]] = None
-        self._pods_cache_ts: Optional[datetime] = None
+        self._username: str | None = None
+        self._password: str | None = None
+        self._pods_cache: list[PointOfDelivery] | None = None
+        self._pods_cache_ts: datetime | None = None
 
     async def authenticate(self, username: str, password: str) -> bool:
         """Authenticate with SSD IMS portal."""
@@ -121,7 +121,7 @@ class SsdImsApiClient:
             _LOGGER.error("Unexpected error during authentication: %s", e)
             return False
 
-    def _extract_session_token(self, response) -> Optional[str]:
+    def _extract_session_token(self, response) -> str | None:
         """Extract SsdAccessToken from response cookies."""
         try:
             cookies = response.cookies
@@ -132,7 +132,7 @@ class SsdImsApiClient:
                 return ssd_token_cookie.value
             return None
         except Exception as e:
-            _LOGGER.error(f"Error extracting session token: {e}")
+            _LOGGER.error("Error extracting session token: %s", e)
             return None
 
     def _is_session_expired(self, response) -> bool:
@@ -144,15 +144,18 @@ class SsdImsApiClient:
                 return True
 
             content_type = response.headers.get("content-type", "").lower()
-            # Check if response is HTML (session expired) instead of JSON
-            if "text/html" in content_type and response.status != 200:
+            # Check if response is HTML (session expired) instead of JSON.
+            # This covers both non-200 redirects to a login page and rare cases
+            # where the portal returns HTTP 200 with an HTML login page body.
+            if "text/html" in content_type:
                 _LOGGER.warning(
-                    "Session expired - received HTML response instead of JSON"
+                    "Session expired - received HTML response (status=%s) instead of JSON",
+                    response.status,
                 )
                 return True
             return False
         except Exception as e:
-            _LOGGER.error(f"Error checking session expiration: {e}")
+            _LOGGER.error("Error checking session expiration: %s", e)
             return False
 
     async def _reauthenticate(self) -> bool:
@@ -180,7 +183,12 @@ class SsdImsApiClient:
 
                 wait_time = 2**attempt  # exponential backoff: 1s, 2s, 4s
                 _LOGGER.warning(
-                    f"Network error on attempt {attempt + 1}/{max_retries} for {url}: {e}. Retrying in {wait_time}s..."
+                    "Network error on attempt %d/%d for %s: %s. Retrying in %ds...",
+                    attempt + 1,
+                    max_retries,
+                    url,
+                    e,
+                    wait_time,
                 )
                 await asyncio.sleep(wait_time)
             except Exception:
@@ -190,7 +198,7 @@ class SsdImsApiClient:
     async def _make_authenticated_request(self, method: str, url: str, **kwargs) -> Any:
         """Make an authenticated request with automatic re-authentication on session expiry."""
         if not self._authenticated:
-            raise Exception("Not authenticated")
+            raise RuntimeError("Not authenticated")
 
         # Add required headers for SSD IMS API compatibility
         headers = dict(kwargs.get("headers", {}))
@@ -199,74 +207,64 @@ class SsdImsApiClient:
         headers["Accept"] = "application/json, text/plain, */*"
         kwargs["headers"] = headers
 
-        try:
-            async with self._session.request(
-                method, url, timeout=self._timeout, **kwargs
-            ) as response:
-                # Check if session has expired
-                if self._is_session_expired(response):
-                    _LOGGER.info("Session expired, attempting re-authentication...")
-                    if await self._reauthenticate():
-                        # Retry the request after re-authentication
-                        _LOGGER.info(
-                            "Re-authentication successful, retrying request..."
-                        )
-                        async with self._session.request(
-                            method, url, timeout=self._timeout, **kwargs
-                        ) as retry_response:
-                            if retry_response.status == 200:
-                                return await retry_response.json()
-                            else:
-                                raise Exception(
-                                    f"API error after re-authentication: "
-                                    f"{retry_response.status}"
-                                )
-                    else:
-                        raise Exception("Re-authentication failed")
-
-                if response.status == 200:
-                    return await response.json()
-                elif response.status == 401:
-                    # Session expired - will be handled by session check above
-                    raise Exception("Authentication required")
-                elif response.status == 403:
-                    raise Exception("Access forbidden - check permissions")
-                elif response.status == 404:
-                    raise Exception("API endpoint not found")
-                elif response.status == 500:
-                    raise Exception("Server error - try again later")
+        async with self._session.request(
+            method, url, timeout=self._timeout, **kwargs
+        ) as response:
+            # Check if session has expired
+            if self._is_session_expired(response):
+                _LOGGER.info("Session expired, attempting re-authentication...")
+                if await self._reauthenticate():
+                    # Retry the request after re-authentication
+                    _LOGGER.info("Re-authentication successful, retrying request...")
+                    async with self._session.request(
+                        method, url, timeout=self._timeout, **kwargs
+                    ) as retry_response:
+                        if retry_response.status == 200:
+                            return await retry_response.json()
+                        else:
+                            raise RuntimeError(
+                                f"API error after re-authentication: {retry_response.status}"
+                            )
                 else:
-                    raise Exception(f"API error: {response.status}")
+                    raise RuntimeError("Re-authentication failed")
 
-        except ClientError as e:
-            _LOGGER.error(f"Network error in authenticated request: {e}")
-            raise
-        except Exception as e:
-            _LOGGER.error(f"Unexpected error in authenticated request: {e}")
-            raise
+            if response.status == 200:
+                return await response.json()
+            elif response.status == 401:
+                raise RuntimeError("Authentication required")
+            elif response.status == 403:
+                raise RuntimeError("Access forbidden - check permissions")
+            elif response.status == 404:
+                raise RuntimeError("API endpoint not found")
+            elif response.status == 500:
+                raise RuntimeError("Server error - try again later")
+            else:
+                raise RuntimeError(f"API error: {response.status}")
 
-    async def get_points_of_delivery(self) -> List[PointOfDelivery]:
+    async def get_points_of_delivery(self) -> list[PointOfDelivery]:
         """Get available points of delivery."""
         if not self._authenticated:
-            raise Exception("Not authenticated")
+            raise RuntimeError("Not authenticated")
 
         try:
             _LOGGER.debug("Fetching points of delivery from API")
             data = await self._retry_request_with_backoff("GET", API_PODS)
             _LOGGER.debug(
-                f"POD API response type: {type(data).__name__}, length: {len(data) if isinstance(data, list) else 'N/A'}"
+                "POD API response type: %s, length: %s",
+                type(data).__name__,
+                len(data) if isinstance(data, list) else "N/A",
             )
             pods = [PointOfDelivery(**pod) for pod in data]
             self._pods_cache = pods
             self._pods_cache_ts = datetime.now(UTC)
-            _LOGGER.debug(f"Retrieved {len(pods)} points of delivery")
+            _LOGGER.debug("Retrieved %d points of delivery", len(pods))
             return pods
 
         except ClientError as e:
-            _LOGGER.error(f"Network error getting PODs: {e}")
+            _LOGGER.error("Network error getting PODs: %s", e)
             raise
         except Exception as e:
-            _LOGGER.error(f"Unexpected error getting PODs: {e}")
+            _LOGGER.error("Unexpected error getting PODs: %s", e)
             raise
 
     async def get_metering_data(
@@ -277,16 +275,16 @@ class SsdImsApiClient:
         to_date: datetime,
         page: int = 1,
         page_size: int = 100,
-    ) -> List[MeteringData]:
+    ) -> list[MeteringData]:
         """Get detailed metering data for time period."""
         if not self._authenticated:
-            raise Exception("Not authenticated")
+            raise RuntimeError("Not authenticated")
 
         try:
             # First, get current session POD ID for this stable pod_id
             session_pod_id = await self._get_session_pod_id_by_stable_id(pod_id)
             if not session_pod_id:
-                raise Exception(f"POD not found for stable ID: {pod_id}")
+                raise RuntimeError(f"POD not found for stable ID: {pod_id}")
 
             payload = {
                 "page": {"totalRows": 96, "currentPage": page, "pageSize": page_size},
@@ -337,15 +335,17 @@ class SsdImsApiClient:
                     )
 
             _LOGGER.debug(
-                f"Retrieved {len(metering_data)} metering data points for POD {pod_id}"
+                "Retrieved %d metering data points for POD %s",
+                len(metering_data),
+                pod_id,
             )
             return metering_data
 
         except ClientError as e:
-            _LOGGER.error(f"Network error getting metering data: {e}")
+            _LOGGER.error("Network error getting metering data: %s", e)
             raise
         except Exception as e:
-            _LOGGER.error(f"Unexpected error getting metering data: {e}")
+            _LOGGER.error("Unexpected error getting metering data: %s", e)
             raise
 
     async def get_chart_data(
@@ -356,13 +356,13 @@ class SsdImsApiClient:
     ) -> ChartData:
         """Get summary chart data for time period."""
         if not self._authenticated:
-            raise Exception("Not authenticated")
+            raise RuntimeError("Not authenticated")
 
         try:
             # Efficiently get session_pod_id and pod_text in one go
             target_pod = await self._get_pod_by_stable_id(pod_id)
             if not target_pod:
-                raise Exception(f"POD not found for stable ID: {pod_id}")
+                raise RuntimeError(f"POD not found for stable ID: {pod_id}")
 
             session_pod_id = target_pod.value
             pod_text = target_pod.text
@@ -391,9 +391,10 @@ class SsdImsApiClient:
             # Validate that we have the expected data structure
             if not isinstance(data, dict):
                 _LOGGER.error(
-                    f"Chart data response is not a dictionary: {type(data).__name__}"
+                    "Chart data response is not a dictionary: %s",
+                    type(data).__name__,
                 )
-                raise Exception("Invalid chart data response format")
+                raise RuntimeError("Invalid chart data response format")
 
             # Check if we have any data
             if not data.get("meteringDatetime"):
@@ -447,24 +448,15 @@ class SsdImsApiClient:
                     "idleSupply",
                 ]:
                     sample_info = _log_data_sample(data, field)
-                    _LOGGER.error(f"  {field}: {sample_info}")
-                raise Exception(f"Chart data validation failed: {str(e)}") from e
+                    _LOGGER.error("  %s: %s", field, sample_info)
+                raise RuntimeError(f"Chart data validation failed: {str(e)}") from e
 
         except ClientError as e:
-            _LOGGER.error(f"Network error getting chart data: {e}")
+            _LOGGER.error("Network error getting chart data: %s", e)
             raise
         except Exception as e:
-            _LOGGER.error(f"Unexpected error getting chart data: {e}")
+            _LOGGER.error("Unexpected error getting chart data: %s", e)
             raise
-
-    async def _get_pod_id_by_text(self, pod_text: str) -> Optional[str]:
-        """Get current POD ID for a given pod_text (label)."""
-        try:
-            pods = await self.get_points_of_delivery()
-            return next((pod.value for pod in pods if pod.text == pod_text), None)
-        except Exception as e:
-            _LOGGER.error(f"Error getting POD ID for text {pod_text}: {e}")
-            return None
 
     def _is_pods_cache_valid(self) -> bool:
         """Return True when the cached POD list is still valid."""
@@ -472,18 +464,18 @@ class SsdImsApiClient:
             return False
         return datetime.now(UTC) - self._pods_cache_ts <= PODS_CACHE_TTL
 
-    async def _get_cached_pods(self) -> List[PointOfDelivery]:
+    async def _get_cached_pods(self) -> list[PointOfDelivery]:
         """Return cached PODs when fresh, otherwise fetch from API."""
         if self._is_pods_cache_valid():
             return self._pods_cache
         return await self.get_points_of_delivery()
 
-    async def _get_pod_by_stable_id(self, pod_id: str) -> Optional[PointOfDelivery]:
+    async def _get_pod_by_stable_id(self, pod_id: str) -> PointOfDelivery | None:
         """Return POD details by stable ID."""
         pods = await self._get_cached_pods()
         return next((pod for pod in pods if pod.id == pod_id), None)
 
-    async def _get_session_pod_id_by_stable_id(self, pod_id: str) -> Optional[str]:
+    async def _get_session_pod_id_by_stable_id(self, pod_id: str) -> str | None:
         """Get current session POD ID for a stable POD ID."""
         target_pod = await self._get_pod_by_stable_id(pod_id)
         return target_pod.value if target_pod else None
@@ -494,7 +486,7 @@ class SsdImsApiClient:
         return self._authenticated
 
     @property
-    def session_token(self) -> Optional[str]:
+    def session_token(self) -> str | None:
         """Get current session token."""
         return self._session_token
 
