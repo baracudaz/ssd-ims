@@ -50,16 +50,24 @@ async def async_setup_entry(
     for pod_id in pod_ids:
         friendly_name = pod_name_mapping.get(pod_id, pod_id)
         sensors.append(SsdImsLastUpdateSensor(coordinator, pod_id, friendly_name))
-        sensors.extend(
-            SsdImsYesterdaySensor(
-                coordinator,
-                sensor_type,
-                PERIOD_YESTERDAY,
-                pod_id,
-                friendly_name,
+        for sensor_type in enabled_sensor_types:
+            sensors.append(
+                SsdImsYesterdaySensor(
+                    coordinator,
+                    sensor_type,
+                    PERIOD_YESTERDAY,
+                    pod_id,
+                    friendly_name,
+                )
             )
-            for sensor_type in enabled_sensor_types
-        )
+            sensors.append(
+                SsdImsCumulativeSensor(
+                    coordinator,
+                    sensor_type,
+                    pod_id,
+                    friendly_name,
+                )
+            )
 
     async_add_entities(sensors)
 
@@ -152,8 +160,38 @@ class SsdImsYesterdaySensor(SsdImsEnergySensor):
         return float(value) if value is not None else None
 
 
+class SsdImsCumulativeSensor(SsdImsEnergySensor):
+    """Sensor for cumulative total energy imported from statistics."""
+
+    def __init__(
+        self,
+        coordinator: SsdImsDataCoordinator,
+        sensor_type: str,
+        pod_id: str,
+        friendly_name: str,
+    ) -> None:
+        """Initialize cumulative sensor."""
+        super().__init__(coordinator, sensor_type, "", pod_id, friendly_name)
+
+        sensor_name = self._generate_sensor_name("Total")
+        sanitized_sensor_name = sanitize_name(sensor_name)
+        self._attr_unique_id = f"{pod_id}_{sanitized_sensor_name}_{sensor_type}_total"
+        self._setup_entity_naming(sensor_name)
+
+    @property
+    def native_value(self) -> StateType | None:
+        """Return cumulative total from statistics."""
+        if not self.coordinator.data or not (
+            pod_data := self.coordinator.data.get(self.pod_id)
+        ):
+            return None
+
+        cumulative_totals = pod_data.get("cumulative_totals", {})
+        value = cumulative_totals.get(self.sensor_type)
+        return float(value) if value is not None else None
+
+
 class SsdImsLastUpdateSensor(SsdImsSensor):
-    """Sensor for last update timestamp."""
 
     def __init__(
         self,

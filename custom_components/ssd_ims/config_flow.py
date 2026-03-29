@@ -47,6 +47,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._scan_interval: int | None = None
         self._enable_history_import: bool | None = None
         self._history_days: int | None = None
+        self._reconfiguring: bool = False
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -80,6 +81,73 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_reauth(
+        self, entry_data: dict[str, Any]
+    ) -> config_entries.ConfigFlowResult:
+        """Handle re-authentication when credentials are invalid."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Confirm re-authentication with new credentials."""
+        errors: dict[str, str] = {}
+        reauth_entry = self._get_reauth_entry()
+
+        if user_input is not None:
+            try:
+                api_client = SsdImsApiClient(async_get_clientsession(self.hass))
+                if await api_client.authenticate(
+                    user_input[CONF_USERNAME], user_input[CONF_PASSWORD]
+                ):
+                    return self.async_update_reload_and_abort(
+                        reauth_entry,
+                        data_updates={
+                            CONF_USERNAME: user_input[CONF_USERNAME],
+                            CONF_PASSWORD: user_input[CONF_PASSWORD],
+                        },
+                    )
+                errors["base"] = "invalid_auth"
+            except Exception as e:
+                _LOGGER.error("Error during re-authentication: %s", e)
+                errors["base"] = "cannot_connect"
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_USERNAME,
+                        default=reauth_entry.data.get(CONF_USERNAME, ""),
+                    ): str,
+                    vol.Required(CONF_PASSWORD): str,
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "username": reauth_entry.data.get(CONF_USERNAME, ""),
+            },
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle reconfiguration — update POD selection and names."""
+        self._reconfiguring = True
+        current_entry = self._get_reconfigure_entry()
+        self._username = current_entry.data.get(CONF_USERNAME)
+        self._password = current_entry.data.get(CONF_PASSWORD)
+
+        try:
+            api_client = SsdImsApiClient(async_get_clientsession(self.hass))
+            if await api_client.authenticate(self._username, self._password):
+                self._pods = await api_client.get_points_of_delivery()
+                return await self.async_step_point_of_delivery()
+            return self.async_abort(reason="reauth_required")
+        except Exception as e:
+            _LOGGER.error("Error fetching PODs during reconfigure: %s", e)
+            return self.async_abort(reason="cannot_connect")
+
     async def async_step_point_of_delivery(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
@@ -103,6 +171,14 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "Skipping POD with invalid ID format: %s - %s", pod.text, e
                 )
 
+        # Pre-select currently configured PODs when reconfiguring
+        suggested_values: dict[str, Any] = {}
+        if self._reconfiguring:
+            current_entry = self._get_reconfigure_entry()
+            suggested_values["selected_pods"] = current_entry.data.get(
+                CONF_POINT_OF_DELIVERY, []
+            )
+
         return self.async_show_form(
             step_id="point_of_delivery",
             data_schema=vol.Schema(
@@ -113,6 +189,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+            suggested_values=suggested_values or None,
         )
 
     async def async_step_pod_naming(
@@ -153,11 +230,23 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if next((p for p in self._pods if p.id == pod_id), None) is not None:
                 schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
 
+        # Pre-populate existing names when reconfiguring
+        suggested_values: dict[str, Any] = {}
+        if self._reconfiguring:
+            current_entry = self._get_reconfigure_entry()
+            current_names = current_entry.data.get(CONF_POD_NAME_MAPPING, {})
+            suggested_values = {
+                f"pod_name_{pod_id}": current_names[pod_id]
+                for pod_id in self._selected_pods
+                if pod_id in current_names
+            }
+
         return self.async_show_form(
             step_id="pod_naming",
             data_schema=vol.Schema(schema_fields),
             errors=errors,
             description_placeholders={"pod_info": self._get_pod_info_text()},
+            suggested_values=suggested_values or None,
         )
 
     def _get_pod_info_text(self) -> str:
@@ -194,25 +283,46 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else 0,
             }
 
+            if self._reconfiguring:
+                return self.async_update_reload_and_abort(
+                    self._get_reconfigure_entry(),
+                    data_updates=config_data,
+                    reason="reconfigure_successful",
+                )
+
             return self.async_create_entry(
                 title=f"{NAME} ({self._username})",
                 data=config_data,
             )
+
+        # Pre-populate with current settings when reconfiguring
+        default_scan_interval = DEFAULT_SCAN_INTERVAL
+        default_history_days = DEFAULT_HISTORY_DAYS
+        default_enable_history_import = DEFAULT_ENABLE_HISTORY_IMPORT
+        if self._reconfiguring:
+            current_entry = self._get_reconfigure_entry()
+            default_scan_interval = current_entry.options.get(
+                CONF_SCAN_INTERVAL,
+                current_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+            )
+            stored_days = current_entry.data.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS)
+            default_enable_history_import = stored_days > 0
+            default_history_days = stored_days if stored_days > 0 else DEFAULT_HISTORY_DAYS
 
         return self.async_show_form(
             step_id="history_import",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
+                        CONF_SCAN_INTERVAL, default=default_scan_interval
                     ): vol.In(SCAN_INTERVAL_OPTIONS),
                     vol.Optional(
                         CONF_ENABLE_HISTORY_IMPORT,
-                        default=DEFAULT_ENABLE_HISTORY_IMPORT,
+                        default=default_enable_history_import,
                     ): bool,
                     vol.Optional(
                         CONF_HISTORY_DAYS,
-                        default=DEFAULT_HISTORY_DAYS,
+                        default=default_history_days,
                     ): vol.All(vol.Coerce(int), vol.Range(min=1, max=365)),
                 }
             ),

@@ -9,6 +9,14 @@
           "password": "Heslo"
         }
       },
+      "reauth_confirm": {
+        "title": "Znova sa prihláste do SSD IMS",
+        "description": "Vaše prihlasovacie údaje pre {username} už nie sú platné. Zadajte aktuálne heslo na obnovenie pripojenia.",
+        "data": {
+          "username": "Používateľské meno",
+          "password": "Heslo"
+        }
+      },
       "point_of_delivery": {
         "title": "Vyberte odberné miesta",
         "description": "Vyberte ktoré odberné miesta chcete monitorovať",
@@ -43,7 +51,11 @@
       "duplicate_name": "Tento názov sa už používa pre iné OM"
     },
     "abort": {
-      "already_configured": "Integrácia je už nakonfigurovaná"
+      "already_configured": "Integrácia je už nakonfigurovaná",
+      "reauth_successful": "Opätovné prihlásenie bolo úspešné",
+      "reconfigure_successful": "Integrácia bola úspešne rekonfigurovaná",
+      "reauth_required": "Vaše prihlasovacie údaje nie sú platné. Použite možnosť Znova prihlásiť na ich aktualizáciu.",
+      "cannot_connect": "Nedá sa pripojiť k SSD IMS portálu"
     }
   },
   "options": {
