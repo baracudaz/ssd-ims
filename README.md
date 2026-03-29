@@ -109,7 +109,7 @@ To add SSD IMS data to your Energy dashboard:
 
 ```bash
 # Clone the repository
-git https://github.com/baracudaz/ssd-ims.git
+git clone https://github.com/baracudaz/ssd-ims.git
 cd ssd-ims
 
 # Start Home Assistant container
@@ -136,6 +136,7 @@ make test-coverage
 1. **Authentication Failed**
    - Verify your username and password at <https://ims.ssd.sk>
    - Ensure your account is active
+   - If credentials have changed, Home Assistant will prompt you to re-enter them via a notification — click **Re-authenticate** to update without removing the integration
 
 2. **No Data in Energy Dashboard**
    - Wait for the first data update (can take up to 6 hours depending on interval)
