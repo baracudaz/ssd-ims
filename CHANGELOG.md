@@ -1,13 +1,10 @@
 # Changelog
 
-## Version 2.0.6
+## Version 2.0.5
 
 - **Bug fix**: Scan interval set via the options flow now survives a restart; `async_setup_entry` reads `entry.options` first and falls back to `entry.data`
 - **Bug fix**: `async_unload_entry` once again clears `entry.runtime_data` after successful platform unload, preventing stale coordinator references on reload
 - **Bug fix**: Migration to version 2 no longer silently bumps the config version when POD discovery returns `None`; it now logs an error and returns `False` so the migration is retried on the next startup
-
-## Version 2.0.5
-
 - **Bug fix**: Authentication failures now correctly trigger Home Assistant's re-authentication flow instead of silently failing at startup
 - **Bug fix**: Config entry migration no longer re-runs on every restart (version is now properly bumped to 2 after migration)
 - **Bug fix**: Platform setup now correctly waits for the first data fetch before registering entities, preventing empty sensor states on initial load
