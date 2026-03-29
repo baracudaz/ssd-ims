@@ -1,16 +1,15 @@
 """Configuration flow for SSD IMS integration."""
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import voluptuous as vol
-from aiohttp import ClientSession
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api_client import SsdImsApiClient
 from .const import (
@@ -36,44 +35,40 @@ _LOGGER = logging.getLogger(__name__)
 class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle SSD IMS configuration flow."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         """Initialize config flow."""
-        self._username: Optional[str] = None
-        self._password: Optional[str] = None
-        self._pods: Optional[List[PointOfDelivery]] = None
-        self._selected_pods: Optional[List[str]] = None
-        self._pod_name_mapping: Optional[Dict[str, str]] = None
-        self._scan_interval: Optional[int] = None
-        self._enable_history_import: Optional[bool] = None
-        self._history_days: Optional[int] = None
+        self._username: str | None = None
+        self._password: str | None = None
+        self._pods: list[PointOfDelivery] | None = None
+        self._selected_pods: list[str] | None = None
+        self._pod_name_mapping: dict[str, str] | None = None
+        self._scan_interval: int | None = None
+        self._enable_history_import: bool | None = None
+        self._history_days: int | None = None
 
     async def async_step_user(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         """Handle initial user configuration step."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             self._username = user_input[CONF_USERNAME]
             self._password = user_input[CONF_PASSWORD]
 
             try:
-                # Test authentication
-                async with ClientSession() as session:
-                    api_client = SsdImsApiClient(session)
-                    if await api_client.authenticate(self._username, self._password):
-                        # Get available PODs
-                        self._pods = await api_client.get_points_of_delivery()
-                        return await self.async_step_point_of_delivery()
-                    else:
-                        errors["base"] = "invalid_auth"
+                api_client = SsdImsApiClient(async_get_clientsession(self.hass))
+                if await api_client.authenticate(self._username, self._password):
+                    self._pods = await api_client.get_points_of_delivery()
+                    return await self.async_step_point_of_delivery()
+                else:
+                    errors["base"] = "invalid_auth"
             except Exception as e:
-                _LOGGER.error(f"Error during authentication: {e}")
+                _LOGGER.error("Error during authentication: %s", e)
                 errors["base"] = "cannot_connect"
 
-        # Show form
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
@@ -86,10 +81,10 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_point_of_delivery(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         """Handle point of delivery selection step."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             if not (selected_pods := user_input.get("selected_pods", [])):
@@ -102,13 +97,11 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         pod_options = {}
         for pod in self._pods:
             try:
-                pod_id = pod.id  # Use stable 16-20 char ID
-                pod_options[pod_id] = pod.text
+                pod_options[pod.id] = pod.text
             except ValueError as e:
                 _LOGGER.warning(
-                    f"Skipping POD with invalid ID format: {pod.text} - {e}"
+                    "Skipping POD with invalid ID format: %s - %s", pod.text, e
                 )
-                continue
 
         return self.async_show_form(
             step_id="point_of_delivery",
@@ -123,47 +116,40 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_pod_naming(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         """Handle POD naming configuration step."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            pod_name_mapping = {}
-            sanitized_names = set()
+            pod_name_mapping: dict[str, str] = {}
+            sanitized_names: set[str] = set()
 
-            # Process POD names using stable pod.id
             for pod_id in self._selected_pods:
                 if display_name := user_input.get(f"pod_name_{pod_id}", "").strip():
-                    # Check length before sanitization
                     if len(display_name) > POD_NAME_MAX_LENGTH:
                         errors[f"pod_name_{pod_id}"] = "too_long"
                         continue
 
                     sanitized_lower = sanitize_name(display_name)
 
-                    # Check if sanitized name is empty
                     if not sanitized_lower:
                         errors[f"pod_name_{pod_id}"] = "invalid_format"
                         continue
 
-                    # Check uniqueness of sanitized names
                     if sanitized_lower in sanitized_names:
                         errors[f"pod_name_{pod_id}"] = "duplicate_name"
                         continue
 
                     sanitized_names.add(sanitized_lower)
-                    # Store the original display name (will be sanitized when creating entity IDs)
                     pod_name_mapping[pod_id] = display_name
 
             if not errors:
                 self._pod_name_mapping = pod_name_mapping
                 return await self.async_step_history_import()
 
-        # Create POD naming form using stable pod.id
-        schema_fields = {}
+        schema_fields: dict = {}
         for pod_id in self._selected_pods:
-            # Find pod by stable ID
             if next((p for p in self._pods if p.id == pod_id), None) is not None:
                 schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
 
@@ -178,16 +164,15 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Generate POD information text for the form."""
         info_lines = []
         for pod_id in self._selected_pods:
-            # Find pod by stable ID
             if pod := next((p for p in self._pods if p.id == pod_id), None):
                 info_lines.append(f"• {pod.text} → {pod_id}")
         return "\n".join(info_lines)
 
     async def async_step_history_import(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         """Handle final configuration step with update interval and history import."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             self._scan_interval = user_input.get(
@@ -198,7 +183,6 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             self._history_days = user_input.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS)
 
-            # Create config entry
             config_data = {
                 CONF_USERNAME: self._username,
                 CONF_PASSWORD: self._password,
@@ -248,26 +232,18 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
     """Handle SSD IMS options flow."""
 
     async def async_step_init(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         """Manage the options."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Update config entry
-            new_data = self.config_entry.data.copy()
-            new_data[CONF_SCAN_INTERVAL] = user_input[CONF_SCAN_INTERVAL]
-
-            # Update config entry
-            self.hass.config_entries.async_update_entry(
-                self.config_entry, data=new_data
-            )
-
-            # Update coordinator configuration and trigger refresh if needed
+            # Update coordinator configuration
             coordinator = self.config_entry.runtime_data
-            await coordinator.update_config(new_data)
-
-            return self.async_create_entry(title="", data={})
+            await coordinator.update_config(
+                {**self.config_entry.data, **user_input}
+            )
+            return self.async_create_entry(title="", data=user_input)
 
         return self.async_show_form(
             step_id="init",
@@ -275,8 +251,11 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
-                        default=self.config_entry.data.get(
-                            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+                        default=self.config_entry.options.get(
+                            CONF_SCAN_INTERVAL,
+                            self.config_entry.data.get(
+                                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+                            ),
                         ),
                     ): vol.In(SCAN_INTERVAL_OPTIONS),
                 }

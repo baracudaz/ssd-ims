@@ -2,9 +2,9 @@
 
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 class UserProfile(BaseModel):
@@ -22,7 +22,7 @@ class AuthResponse(BaseModel):
     """Authentication response model."""
 
     user_profile: UserProfile = Field(alias="userProfile")
-    user_actions: List[int] = Field(alias="userActions")
+    user_actions: list[int] = Field(alias="userActions")
     password_expiration_date: datetime = Field(alias="passwordExpirationDate")
     show_password_change_warning: bool = Field(alias="showPasswordChangeWarning")
 
@@ -69,34 +69,18 @@ class PointOfDelivery(BaseModel):
         )
 
 
-class PodNameMapping(BaseModel):
-    """POD name mapping model for friendly names."""
-
-    pod_id: str
-    original_name: str
-    friendly_name: str
-
-
-class QualityType(BaseModel):
-    """Quality type model."""
-
-    value: str
-    text: str
-    codebook: str
-
-
 class MeteringDataRow(BaseModel):
     """Individual metering data row."""
 
-    values: List[Any]
+    values: list[Any]
 
 
 class MeteringDataResponse(BaseModel):
     """Metering data response model."""
 
-    columns: List[Dict[str, Any]]
-    rows: List[MeteringDataRow]
-    page: Optional[Dict[str, Any]] = None
+    columns: list[dict[str, Any]]
+    rows: list[MeteringDataRow]
+    page: dict[str, Any] | None = None
 
 
 class MeteringData(BaseModel):
@@ -104,30 +88,30 @@ class MeteringData(BaseModel):
 
     metering_datetime: datetime
     period: int
-    actual_consumption: Optional[float] = None
-    actual_supply: Optional[float] = None
-    idle_consumption: Optional[float] = None
-    idle_supply: Optional[float] = None
+    actual_consumption: float | None = None
+    actual_supply: float | None = None
+    idle_consumption: float | None = None
+    idle_supply: float | None = None
 
 
 class ChartData(BaseModel):
     """Summary chart data model."""
 
-    metering_datetime: List[str] = Field(alias="meteringDatetime", default_factory=list)
-    actual_consumption: List[float] = Field(
+    metering_datetime: list[str] = Field(alias="meteringDatetime", default_factory=list)
+    actual_consumption: list[float] = Field(
         alias="actualConsumption", default_factory=list
     )
-    actual_supply: List[float] = Field(alias="actualSupply", default_factory=list)
-    idle_consumption: List[float] = Field(alias="idleConsumption", default_factory=list)
-    idle_supply: List[float] = Field(alias="idleSupply", default_factory=list)
-    sum_actual_consumption: Optional[float] = Field(
+    actual_supply: list[float] = Field(alias="actualSupply", default_factory=list)
+    idle_consumption: list[float] = Field(alias="idleConsumption", default_factory=list)
+    idle_supply: list[float] = Field(alias="idleSupply", default_factory=list)
+    sum_actual_consumption: float | None = Field(
         alias="sumActualConsumption", default=0.0
     )
-    sum_actual_supply: Optional[float] = Field(alias="sumActualSupply", default=0.0)
-    sum_idle_consumption: Optional[float] = Field(
+    sum_actual_supply: float | None = Field(alias="sumActualSupply", default=0.0)
+    sum_idle_consumption: float | None = Field(
         alias="sumIdleConsumption", default=0.0
     )
-    sum_idle_supply: Optional[float] = Field(alias="sumIdleSupply", default=0.0)
+    sum_idle_supply: float | None = Field(alias="sumIdleSupply", default=0.0)
 
     @field_validator(
         "actual_consumption",
@@ -137,7 +121,7 @@ class ChartData(BaseModel):
         mode="before",
     )
     @classmethod
-    def validate_float_lists(cls, v: Any, info: ValidationInfo) -> List[float]:
+    def validate_float_lists(cls, v: Any, info: ValidationInfo) -> list[float]:
         """Validate float lists with enhanced error messages."""
         if not isinstance(v, list):
             # Handle single value case
@@ -189,21 +173,3 @@ class ChartData(BaseModel):
                 f"Field '{info.field_name}': Cannot convert '{v}' (type: {type(v).__name__}) to float. "
                 f"Raw value: {repr(v)}. Original error: {str(e)}"
             ) from e
-
-
-class AggregatedData(BaseModel):
-    """Aggregated data for different time periods.
-
-    Note: This model is flexible and can contain any time period keys
-    as defined in TIME_PERIODS_CONFIG. The structure is:
-    {
-        "period_key": {
-            "sensor_type": float_value,
-            ...
-        },
-        ...
-    }
-    """
-
-    # Allow arbitrary fields for dynamic time periods
-    model_config = ConfigDict(extra="allow")

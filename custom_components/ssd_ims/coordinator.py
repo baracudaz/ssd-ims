@@ -4,7 +4,7 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timedelta
-from typing import Any, Dict
+from typing import Any
 
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import (
@@ -54,14 +54,14 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         self,
         hass: HomeAssistant,
         api_client: SsdImsApiClient,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         entry: ConfigEntry,
     ) -> None:
         """Initialize coordinator."""
         self.api_client = api_client
         self.config = config
         self.entry = entry
-        self.pods: Dict[str, PointOfDelivery] = {}
+        self.pods: dict[str, PointOfDelivery] = {}
 
         scan_interval = timedelta(
             minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -74,7 +74,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             config_entry=entry,
         )
 
-    async def update_config(self, new_config: Dict[str, Any]) -> None:
+    async def update_config(self, new_config: dict[str, Any]) -> None:
         """Update coordinator configuration."""
         self.config = new_config
         new_interval = timedelta(
@@ -83,10 +83,11 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         if self.update_interval != new_interval:
             self.update_interval = new_interval
             _LOGGER.info(
-                f"Update interval changed to {new_interval.total_seconds() / 60} minutes"
+                "Update interval changed to %g minutes",
+                new_interval.total_seconds() / 60,
             )
 
-    async def _async_update_data(self) -> Dict[str, Any]:
+    async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API and update statistics."""
         try:
             _LOGGER.info("Starting data update for SSD IMS integration")
@@ -101,7 +102,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
             await self._update_statistics(pod_ids)
 
-            all_pod_data = {pod_id: {} for pod_id in pod_ids}
+            all_pod_data: dict[str, Any] = {pod_id: {} for pod_id in pod_ids}
             await self._fetch_cumulative_totals_from_statistics(all_pod_data)
 
             now = dt_util.now()
@@ -120,7 +121,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     )
                 except Exception as e:
                     _LOGGER.error(
-                        f"Error fetching yesterday data for POD {pod_id}: {e}"
+                        "Error fetching yesterday data for POD %s: %s", pod_id, e
                     )
                     continue
 
@@ -141,7 +142,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         except ConfigEntryAuthFailed:
             raise
         except Exception as e:
-            _LOGGER.error(f"Error updating data: {e}")
+            _LOGGER.error("Error updating data: %s", e)
             raise UpdateFailed(f"Error updating data: {e}") from e
 
     def _get_random_api_delay(self) -> float:
@@ -156,16 +157,13 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         Checks the last imported statistic and fetches all missing daily data
         up to yesterday. Handles both initial import and daily updates.
         """
-        enabled_sensor_types = ENABLED_SENSOR_TYPES
-
         for pod_id in pod_ids:
             pod_name_mapping = self.config.get("pod_name_mapping", {})
             pod_name = pod_name_mapping.get(pod_id, pod_id)
 
-            for sensor_type in enabled_sensor_types:
-                statistic_type = sensor_type
+            for sensor_type in ENABLED_SENSOR_TYPES:
                 sanitized_friendly_name = sanitize_name(pod_name)
-                statistic_name = f"{sanitized_friendly_name}_{statistic_type}".lower()
+                statistic_name = f"{sanitized_friendly_name}_{sensor_type}".lower()
                 statistic_id = f"{DOMAIN}:{statistic_name}"
 
                 last_stats_result = await get_instance(
@@ -224,7 +222,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                             current_date += timedelta(days=1)
                             continue
 
-                        hourly_data = {}
+                        hourly_data: dict[datetime, float] = {}
                         for i, timestamp_str in enumerate(chart_data.metering_datetime):
                             value = (
                                 chart_data.actual_consumption[i]
@@ -264,7 +262,10 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                             )
                     except Exception as e:
                         _LOGGER.error(
-                            f"Failed to fetch or process data for {statistic_id} on {day_start.date()}: {e}"
+                            "Failed to fetch or process data for %s on %s: %s",
+                            statistic_id,
+                            day_start.date(),
+                            e,
                         )
 
                     current_date += timedelta(days=1)
@@ -282,11 +283,9 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     async_add_external_statistics(self.hass, metadata, stats_to_import)
 
     async def _fetch_cumulative_totals_from_statistics(
-        self, pod_data_dict: Dict[str, Any]
+        self, pod_data_dict: dict[str, Any]
     ) -> None:
         """Fetch cumulative totals from external statistics."""
-        enabled_sensor_types = ENABLED_SENSOR_TYPES
-
         for pod_id, pod_data in pod_data_dict.items():
             pod_name_mapping = self.config.get("pod_name_mapping", {})
             pod_name = pod_name_mapping.get(pod_id, pod_id)
@@ -294,10 +293,9 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             if "cumulative_totals" not in pod_data:
                 pod_data["cumulative_totals"] = {}
 
-            for sensor_type in enabled_sensor_types:
-                statistic_type = sensor_type
+            for sensor_type in ENABLED_SENSOR_TYPES:
                 sanitized_friendly_name = sanitize_name(pod_name)
-                statistic_name = f"{sanitized_friendly_name}_{statistic_type}".lower()
+                statistic_name = f"{sanitized_friendly_name}_{sensor_type}".lower()
                 statistic_id = f"{DOMAIN}:{statistic_name}"
 
                 last_stats = await get_instance(self.hass).async_add_executor_job(
@@ -316,7 +314,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         try:
             pods = await self.api_client.get_points_of_delivery()
             if not pods:
-                raise Exception("No points of delivery found")
+                raise RuntimeError("No points of delivery found")
 
             self.pods = {pod.id: pod for pod in pods}
         except Exception as e:
@@ -335,25 +333,24 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             raise
 
     def _aggregate_data(
-        self, chart_data_by_period: Dict[str, ChartData]
-    ) -> Dict[str, Dict[str, float]]:
+        self, chart_data_by_period: dict[str, ChartData]
+    ) -> dict[str, dict[str, float]]:
         """Aggregate data for other (non-energy) sensors."""
-        aggregated = {}
-        enabled_sensor_types = ENABLED_SENSOR_TYPES
+        aggregated: dict[str, dict[str, float]] = {}
 
         for period_key, chart_data in chart_data_by_period.items():
             aggregated[period_key] = {}
 
             if chart_data and hasattr(chart_data, "sum_actual_consumption"):
-                if SENSOR_TYPE_ACTUAL_CONSUMPTION in enabled_sensor_types:
+                if SENSOR_TYPE_ACTUAL_CONSUMPTION in ENABLED_SENSOR_TYPES:
                     aggregated[period_key][SENSOR_TYPE_ACTUAL_CONSUMPTION] = (
                         chart_data.sum_actual_consumption or 0.0
                     )
-                if SENSOR_TYPE_ACTUAL_SUPPLY in enabled_sensor_types:
+                if SENSOR_TYPE_ACTUAL_SUPPLY in ENABLED_SENSOR_TYPES:
                     aggregated[period_key][SENSOR_TYPE_ACTUAL_SUPPLY] = (
                         chart_data.sum_actual_supply or 0.0
                     )
             else:
-                for sensor_type in enabled_sensor_types:
+                for sensor_type in ENABLED_SENSOR_TYPES:
                     aggregated[period_key][sensor_type] = 0.0
         return aggregated

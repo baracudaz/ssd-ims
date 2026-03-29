@@ -2,17 +2,19 @@
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -42,7 +44,6 @@ async def async_setup_entry(
     pod_ids = config_entry.data.get(CONF_POINT_OF_DELIVERY, DEFAULT_POINT_OF_DELIVERY)
     pod_name_mapping = config_entry.data.get(CONF_POD_NAME_MAPPING, {})
 
-    # Always enable both consumption and supply sensors
     enabled_sensor_types = [SENSOR_TYPE_ACTUAL_CONSUMPTION, SENSOR_TYPE_ACTUAL_SUPPLY]
 
     sensors = []
@@ -63,8 +64,10 @@ async def async_setup_entry(
     async_add_entities(sensors)
 
 
-class SsdImsSensor(SensorEntity):
+class SsdImsSensor(CoordinatorEntity[SsdImsDataCoordinator], SensorEntity):
     """Base sensor for SSD IMS data."""
+
+    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -73,37 +76,19 @@ class SsdImsSensor(SensorEntity):
         friendly_name: str,
     ) -> None:
         """Initialize sensor."""
-        self.coordinator = coordinator
+        super().__init__(coordinator)
         self.pod_id = pod_id
         self.friendly_name = friendly_name
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, self.pod_id)},
-            "name": self.friendly_name,
-            "manufacturer": "IMS.SSD.sk",
-            "model": "IMS Portal",
-        }
-
-    @property
-    def available(self) -> bool:
-        """Return True if entity is available."""
-        return self.coordinator.last_update_success
-
-    @property
-    def should_poll(self) -> bool:
-        """Return False as this entity is updated via coordinator."""
-        return False
-
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        self.async_on_remove(
-            self.coordinator.async_add_listener(self.async_write_ha_state)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self.pod_id)},
+            name=self.friendly_name,
+            manufacturer="IMS.SSD.sk",
+            model="IMS Portal",
         )
 
     def _setup_entity_naming(self, sensor_name: str) -> None:
         """Set up entity naming."""
-        self._attr_has_entity_name = True
         self._attr_name = sensor_name
 
 
@@ -124,6 +109,7 @@ class SsdImsEnergySensor(SsdImsSensor):
         self.period = period
         self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
         self._attr_device_class = SensorDeviceClass.ENERGY
+        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     def _generate_sensor_name(self, suffix: str) -> str:
         """Generate sensor name based on type and suffix."""
@@ -153,7 +139,7 @@ class SsdImsYesterdaySensor(SsdImsEnergySensor):
         self._setup_entity_naming(sensor_name)
 
     @property
-    def native_value(self) -> Optional[StateType]:
+    def native_value(self) -> StateType | None:
         """Return sensor value (yesterday's total)."""
         if not self.coordinator.data or not (
             pod_data := self.coordinator.data.get(self.pod_id)
@@ -185,7 +171,7 @@ class SsdImsLastUpdateSensor(SsdImsSensor):
         self._setup_entity_naming(sensor_name)
 
     @property
-    def native_value(self) -> Optional[datetime]:
+    def native_value(self) -> datetime | None:
         """Return sensor value (last update timestamp)."""
         if not self.coordinator.data or not (
             pod_data := self.coordinator.data.get(self.pod_id)
