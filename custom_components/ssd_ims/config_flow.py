@@ -157,6 +157,8 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return await self.async_step_point_of_delivery()
 
+        return await self.async_step_point_of_delivery()
+
     async def async_step_point_of_delivery(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
@@ -198,7 +200,6 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
-            suggested_values=suggested_values or None,
         )
 
     async def async_step_pod_naming(
@@ -255,18 +256,22 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._reconfiguring:
             current_entry = self._get_reconfigure_entry()
             current_names = current_entry.data.get(CONF_POD_NAME_MAPPING, {})
-            suggested_values = {
-                f"pod_name_{pod_id}": current_names[pod_id]
-                for pod_id in self._selected_pods
-                if pod_id in current_names
-            }
+
+        schema_fields: dict = {}
+        for pod_id in self._selected_pods:
+            if next((p for p in self._pods if p.id == pod_id), None) is not None:
+                if pod_id in current_names:
+                    schema_fields[
+                        vol.Optional(f"pod_name_{pod_id}", default=current_names[pod_id])
+                    ] = str
+                else:
+                    schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
 
         return self.async_show_form(
             step_id="pod_naming",
             data_schema=vol.Schema(schema_fields),
             errors=errors,
             description_placeholders={"pod_info": self._get_pod_info_text()},
-            suggested_values=suggested_values or None,
         )
 
     def _get_pod_info_text(self) -> str:
