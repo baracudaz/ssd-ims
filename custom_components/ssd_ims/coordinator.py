@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import random
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.components.recorder import get_instance
@@ -62,6 +62,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         self.config = config
         self.entry = entry
         self.pods: dict[str, PointOfDelivery] = {}
+        self._last_successful_data_date: date | None = None
 
         scan_interval = timedelta(
             minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -90,6 +91,17 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API and update statistics."""
         try:
+            today = dt_util.now().date()
+
+            # Smart polling: the portal publishes data once per day after midnight.
+            # Once we have confirmed that all statistics are current, skip further
+            # API calls until the next calendar day.
+            if self._last_successful_data_date == today and self.data:
+                _LOGGER.debug(
+                    "Data already up to date for %s — skipping API calls", today
+                )
+                return self.data
+
             _LOGGER.info("Starting data update for SSD IMS integration")
 
             if not self.pods:
@@ -100,7 +112,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning("No PODs configured or discovered. Skipping update.")
                 return {}
 
-            await self._update_statistics(pod_ids)
+            stats_complete = await self._update_statistics(pod_ids)
 
             all_pod_data: dict[str, Any] = {pod_id: {} for pod_id in pod_ids}
             await self._fetch_cumulative_totals_from_statistics(all_pod_data)
@@ -136,6 +148,13 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 for period_key, chart_data in chart_data_by_period.items():
                     pod_data[f"chart_data_{period_key}"] = chart_data
 
+            if stats_complete:
+                self._last_successful_data_date = today
+                _LOGGER.debug(
+                    "Statistics complete for %s — future polls today will be skipped",
+                    today,
+                )
+
             _LOGGER.info("Data update for all sensors completed.")
             return all_pod_data
 
@@ -150,13 +169,15 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         delay = random.uniform(API_DELAY_MIN, API_DELAY_MAX)
         return max(0.3, delay)
 
-    async def _update_statistics(self, pod_ids: list[str]) -> None:
+    async def _update_statistics(self, pod_ids: list[str]) -> bool:
         """
-        Unified function to import statistics.
+        Import statistics for all configured PODs.
 
-        Checks the last imported statistic and fetches all missing daily data
-        up to yesterday. Handles both initial import and daily updates.
+        Returns True when statistics are complete through yesterday for every
+        configured POD and sensor type — meaning no further API calls are needed
+        today and smart polling can safely skip the next scheduled update.
         """
+        all_up_to_date = True
         for pod_id in pod_ids:
             pod_name_mapping = self.config.get("pod_name_mapping", {})
             pod_name = pod_name_mapping.get(pod_id, pod_id)
@@ -206,6 +227,10 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 if start_date >= end_date:
                     continue
 
+                # Track whether the portal has published data for the pending dates.
+                # If no data comes back for any day in the range, the portal hasn't
+                # published yet and we should retry on the next scheduled poll.
+                got_any_data = False
                 stats_to_import = []
                 current_date = start_date
                 while current_date < end_date:
@@ -222,6 +247,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                             current_date += timedelta(days=1)
                             continue
 
+                        got_any_data = True
                         hourly_data: dict[datetime, float] = {}
                         for i, timestamp_str in enumerate(chart_data.metering_datetime):
                             value = (
@@ -270,6 +296,15 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
                     current_date += timedelta(days=1)
 
+                if not got_any_data:
+                    # Portal has not published data for the pending dates yet
+                    _LOGGER.debug(
+                        "No data available yet for %s (pending from %s) — will retry",
+                        statistic_id,
+                        start_date.date(),
+                    )
+                    all_up_to_date = False
+
                 if stats_to_import:
                     metadata = {
                         "has_sum": True,
@@ -281,6 +316,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                         "unit_class": "energy",
                     }
                     async_add_external_statistics(self.hass, metadata, stats_to_import)
+
+        return all_up_to_date
 
     async def _fetch_cumulative_totals_from_statistics(
         self, pod_data_dict: dict[str, Any]

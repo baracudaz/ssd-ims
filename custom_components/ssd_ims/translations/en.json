@@ -9,6 +9,14 @@
           "password": "Password"
         }
       },
+      "reauth_confirm": {
+        "title": "Re-authenticate with SSD IMS",
+        "description": "Your credentials for {username} are no longer valid. Please enter your current password to restore the connection.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      },
       "point_of_delivery": {
         "title": "Select Points of Delivery",
         "description": "Choose which Points of Delivery to monitor",
@@ -43,7 +51,11 @@
       "duplicate_name": "This name is already used for another POD"
     },
     "abort": {
-      "already_configured": "Integration is already configured"
+      "already_configured": "Integration is already configured",
+      "reauth_successful": "Re-authentication was successful",
+      "reconfigure_successful": "Integration was reconfigured successfully",
+      "reauth_required": "Your credentials are invalid. Please use Re-authenticate to update them.",
+      "cannot_connect": "Cannot connect to SSD IMS portal"
     }
   },
   "options": {

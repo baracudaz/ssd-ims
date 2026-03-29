@@ -12,6 +12,9 @@ A custom Home Assistant integration for gathering energy consumption and supply 
 - **Custom POD Names**: Set friendly names for your Points of Delivery (e.g., home address, apartment name)
 - **Historical Data Import**: Import past energy data during initial setup (configurable, up to 365 days)
 - **Automatic Updates**: Configurable update interval (6, 12, or 24 hours recommended)
+- **Re-authentication Flow**: When credentials expire, Home Assistant prompts you to re-enter them without removing the integration
+- **Reconfigure Flow**: Update your Points of Delivery selection and names at any time via the "Reconfigure" option
+- **Diagnostics Support**: Download integration diagnostics (credentials automatically redacted) to help with troubleshooting
 - **Robust Error Handling**: Comprehensive error handling with automatic re-authentication
 
 ## Data Characteristics
@@ -26,12 +29,14 @@ A custom Home Assistant integration for gathering energy consumption and supply 
 
 ## Sensors Created
 
-The integration creates **3 sensors per Point of Delivery**:
+The integration creates **5 sensors per Point of Delivery**:
 
 | Sensor | Description |
 |--------|-------------|
 | `sensor.<pod_name>_actual_consumption_yesterday` | Yesterday's total energy consumption (kWh) |
 | `sensor.<pod_name>_actual_supply_yesterday` | Yesterday's total energy supply/production (kWh) |
+| `sensor.<pod_name>_actual_consumption_total` | Cumulative total consumption from statistics (kWh) |
+| `sensor.<pod_name>_actual_supply_total` | Cumulative total supply from statistics (kWh) |
 | `sensor.<pod_name>_last_update` | Timestamp of last data update |
 
 ## Long-Term Statistics
