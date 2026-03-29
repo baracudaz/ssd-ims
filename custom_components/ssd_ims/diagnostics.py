@@ -20,7 +20,7 @@ async def async_get_config_entry_diagnostics(
     coordinator = entry.runtime_data
 
     coordinator_data: dict[str, Any] = {}
-    for pod_id, pod_data in (coordinator.data or {}).items():
+    for pod_id, pod_data in (getattr(coordinator, "data", None) or {}).items():
         coordinator_data[pod_id] = {
             "last_update": pod_data.get("last_update"),
             "cumulative_totals": pod_data.get("cumulative_totals"),
@@ -30,6 +30,6 @@ async def async_get_config_entry_diagnostics(
     return {
         "entry_data": async_redact_data(dict(entry.data), TO_REDACT),
         "options": dict(entry.options),
-        "pods_discovered": list(coordinator.pods.keys()),
+        "pods_discovered": list((getattr(coordinator, "pods", None) or {}).keys()),
         "coordinator_data": coordinator_data,
     }
