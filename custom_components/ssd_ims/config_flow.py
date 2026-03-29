@@ -140,13 +140,14 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             api_client = SsdImsApiClient(async_get_clientsession(self.hass))
-            if await api_client.authenticate(self._username, self._password):
-                self._pods = await api_client.get_points_of_delivery()
-                return await self.async_step_point_of_delivery()
-            return self.async_abort(reason="reauth_required")
+            if not await api_client.authenticate(self._username, self._password):
+                return self.async_abort(reason="reauth_required")
+            self._pods = await api_client.get_points_of_delivery()
         except Exception as e:
             _LOGGER.error("Error fetching PODs during reconfigure: %s", e)
             return self.async_abort(reason="cannot_connect")
+
+        return await self.async_step_point_of_delivery()
 
     async def async_step_point_of_delivery(
         self, user_input: dict[str, Any] | None = None
@@ -171,25 +172,24 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "Skipping POD with invalid ID format: %s - %s", pod.text, e
                 )
 
-        # Pre-select currently configured PODs when reconfiguring
-        suggested_values: dict[str, Any] = {}
+        # When reconfiguring, pre-select the currently configured PODs via schema default
         if self._reconfiguring:
             current_entry = self._get_reconfigure_entry()
-            suggested_values["selected_pods"] = current_entry.data.get(
-                CONF_POINT_OF_DELIVERY, []
-            )
+            current_pods = current_entry.data.get(CONF_POINT_OF_DELIVERY, [])
+            pods_field = vol.Optional("selected_pods", default=current_pods)
+        else:
+            pods_field = vol.Required("selected_pods")
 
         return self.async_show_form(
             step_id="point_of_delivery",
             data_schema=vol.Schema(
                 {
-                    vol.Required("selected_pods"): vol.All(
+                    pods_field: vol.All(
                         cv.multi_select(pod_options), vol.Length(min=1)
                     ),
                 }
             ),
             errors=errors,
-            suggested_values=suggested_values or None,
         )
 
     async def async_step_pod_naming(
@@ -225,28 +225,27 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._pod_name_mapping = pod_name_mapping
                 return await self.async_step_history_import()
 
-        schema_fields: dict = {}
-        for pod_id in self._selected_pods:
-            if next((p for p in self._pods if p.id == pod_id), None) is not None:
-                schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
-
-        # Pre-populate existing names when reconfiguring
-        suggested_values: dict[str, Any] = {}
+        # Pre-populate existing names when reconfiguring via schema defaults
+        current_names: dict[str, str] = {}
         if self._reconfiguring:
             current_entry = self._get_reconfigure_entry()
             current_names = current_entry.data.get(CONF_POD_NAME_MAPPING, {})
-            suggested_values = {
-                f"pod_name_{pod_id}": current_names[pod_id]
-                for pod_id in self._selected_pods
-                if pod_id in current_names
-            }
+
+        schema_fields: dict = {}
+        for pod_id in self._selected_pods:
+            if next((p for p in self._pods if p.id == pod_id), None) is not None:
+                if pod_id in current_names:
+                    schema_fields[
+                        vol.Optional(f"pod_name_{pod_id}", default=current_names[pod_id])
+                    ] = str
+                else:
+                    schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
 
         return self.async_show_form(
             step_id="pod_naming",
             data_schema=vol.Schema(schema_fields),
             errors=errors,
             description_placeholders={"pod_info": self._get_pod_info_text()},
-            suggested_values=suggested_values or None,
         )
 
     def _get_pod_info_text(self) -> str:
