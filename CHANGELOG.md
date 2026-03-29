@@ -6,6 +6,7 @@
 - **New feature**: Reconfigure flow — update your Points of Delivery selection and friendly names via the integration's "Reconfigure" option, with current settings pre-filled
 - **New feature**: Diagnostics support — integration data (PODs, last update, energy totals) is now included in Home Assistant's diagnostics download; credentials are automatically redacted
 - **New feature**: Cumulative total sensors — two additional sensors per POD (`Actual Consumption Total`, `Actual Supply Total`) expose the running cumulative energy totals from the statistics database, useful in automations and templates
+- **New feature**: Smart polling — once all statistics are confirmed complete for the current calendar day, subsequent scheduled polls skip the API entirely and return cached data; the integration retries automatically on the next poll if the portal hasn't published yet
 
 ## Version 2.0.6
 
