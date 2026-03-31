@@ -87,6 +87,10 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 "Update interval changed to %g minutes",
                 new_interval.total_seconds() / 60,
             )
+        # Reset smart-polling gate so the next scheduled poll performs a full
+        # update — ensures newly added/removed PODs are picked up immediately
+        # even when the config changes on the same calendar day.
+        self._last_successful_data_date = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API and update statistics."""
