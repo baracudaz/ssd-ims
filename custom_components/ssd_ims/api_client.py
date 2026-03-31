@@ -140,7 +140,7 @@ class SsdImsApiClient:
         try:
             # Check for 401 unauthorized status
             if response.status == 401:
-                _LOGGER.warning("Session expired - 401 unauthorized")
+                _LOGGER.debug("Session expired - 401 unauthorized")
                 return True
 
             content_type = response.headers.get("content-type", "").lower()
@@ -246,26 +246,18 @@ class SsdImsApiClient:
         if not self._authenticated:
             raise RuntimeError("Not authenticated")
 
-        try:
-            _LOGGER.debug("Fetching points of delivery from API")
-            data = await self._retry_request_with_backoff("GET", API_PODS)
-            _LOGGER.debug(
-                "POD API response type: %s, length: %s",
-                type(data).__name__,
-                len(data) if isinstance(data, list) else "N/A",
-            )
-            pods = [PointOfDelivery(**pod) for pod in data]
-            self._pods_cache = pods
-            self._pods_cache_ts = datetime.now(UTC)
-            _LOGGER.debug("Retrieved %d points of delivery", len(pods))
-            return pods
-
-        except ClientError as e:
-            _LOGGER.error("Network error getting PODs: %s", e)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error getting PODs: %s", e)
-            raise
+        _LOGGER.debug("Fetching points of delivery from API")
+        data = await self._retry_request_with_backoff("GET", API_PODS)
+        _LOGGER.debug(
+            "POD API response type: %s, length: %s",
+            type(data).__name__,
+            len(data) if isinstance(data, list) else "N/A",
+        )
+        pods = [PointOfDelivery(**pod) for pod in data]
+        self._pods_cache = pods
+        self._pods_cache_ts = datetime.now(UTC)
+        _LOGGER.debug("Retrieved %d points of delivery", len(pods))
+        return pods
 
     async def get_metering_data(
         self,
@@ -280,73 +272,65 @@ class SsdImsApiClient:
         if not self._authenticated:
             raise RuntimeError("Not authenticated")
 
-        try:
-            # First, get current session POD ID for this stable pod_id
-            session_pod_id = await self._get_session_pod_id_by_stable_id(pod_id)
-            if not session_pod_id:
-                raise RuntimeError(f"POD not found for stable ID: {pod_id}")
+        # First, get current session POD ID for this stable pod_id
+        session_pod_id = await self._get_session_pod_id_by_stable_id(pod_id)
+        if not session_pod_id:
+            raise RuntimeError(f"POD not found for stable ID: {pod_id}")
 
-            payload = {
-                "page": {"totalRows": 96, "currentPage": page, "pageSize": page_size},
-                "filters": [
-                    {
-                        "member": "pointOfDeliveryId",
-                        "operator": "Equals",
-                        "type": "Int",
-                        "value": session_pod_id,
-                    },
-                    {
-                        "member": "meteringDatetime",
-                        "operator": "Greater",
-                        "type": "DateTimeMilliseconds",
-                        "value": from_date.isoformat(),
-                        "rangeOperator": "LowerOrEquals",
-                        "rangeValue": to_date.isoformat(),
-                    },
-                ],
-                "sort": [{"member": "meteringDatetime", "sortOrder": "asc"}],
-                "isExport": False,
-            }
+        payload = {
+            "page": {"totalRows": 96, "currentPage": page, "pageSize": page_size},
+            "filters": [
+                {
+                    "member": "pointOfDeliveryId",
+                    "operator": "Equals",
+                    "type": "Int",
+                    "value": session_pod_id,
+                },
+                {
+                    "member": "meteringDatetime",
+                    "operator": "Greater",
+                    "type": "DateTimeMilliseconds",
+                    "value": from_date.isoformat(),
+                    "rangeOperator": "LowerOrEquals",
+                    "rangeValue": to_date.isoformat(),
+                },
+            ],
+            "sort": [{"member": "meteringDatetime", "sortOrder": "asc"}],
+            "isExport": False,
+        }
 
-            data = await self._retry_request_with_backoff(
-                "POST", API_DATA, json=payload
-            )
-            response_model = MeteringDataResponse(**data)
+        data = await self._retry_request_with_backoff(
+            "POST", API_DATA, json=payload
+        )
+        response_model = MeteringDataResponse(**data)
 
-            metering_data = []
-            for row in response_model.rows:
-                values = row.values
-                if len(values) >= 10:
-                    metering_data.append(
-                        MeteringData(
-                            metering_datetime=datetime.fromisoformat(
-                                values[0].replace("Z", "+00:00")
-                            ),
-                            period=values[1],
-                            actual_consumption=values[2]
-                            if values[2] is not None
-                            else None,
-                            actual_supply=values[4] if values[4] is not None else None,
-                            idle_consumption=values[6]
-                            if values[6] is not None
-                            else None,
-                            idle_supply=values[8] if values[8] is not None else None,
-                        )
+        metering_data = []
+        for row in response_model.rows:
+            values = row.values
+            if len(values) >= 10:
+                metering_data.append(
+                    MeteringData(
+                        metering_datetime=datetime.fromisoformat(
+                            values[0].replace("Z", "+00:00")
+                        ),
+                        period=values[1],
+                        actual_consumption=values[2]
+                        if values[2] is not None
+                        else None,
+                        actual_supply=values[4] if values[4] is not None else None,
+                        idle_consumption=values[6]
+                        if values[6] is not None
+                        else None,
+                        idle_supply=values[8] if values[8] is not None else None,
                     )
+                )
 
-            _LOGGER.debug(
-                "Retrieved %d metering data points for POD %s",
-                len(metering_data),
-                pod_id,
-            )
-            return metering_data
-
-        except ClientError as e:
-            _LOGGER.error("Network error getting metering data: %s", e)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error getting metering data: %s", e)
-            raise
+        _LOGGER.debug(
+            "Retrieved %d metering data points for POD %s",
+            len(metering_data),
+            pod_id,
+        )
+        return metering_data
 
     async def get_chart_data(
         self,
@@ -358,105 +342,97 @@ class SsdImsApiClient:
         if not self._authenticated:
             raise RuntimeError("Not authenticated")
 
+        # Efficiently get session_pod_id and pod_text in one go
+        target_pod = await self._get_pod_by_stable_id(pod_id)
+        if not target_pod:
+            raise RuntimeError(f"POD not found for stable ID: {pod_id}")
+
+        session_pod_id = target_pod.value
+        pod_text = target_pod.text
+
+        payload = {
+            "pointOfDeliveryId": session_pod_id,
+            "validFromDate": from_date.isoformat(),
+            "validToDate": to_date.isoformat(),
+            "pointOfDeliveryText": pod_text,
+        }
+
+        _LOGGER.debug(
+            "Chart data request: validFromDate=%s, validToDate=%s",
+            payload["validFromDate"],
+            payload["validToDate"],
+        )
+
+        data = await self._retry_request_with_backoff(
+            "POST", API_CHART, json=payload
+        )
+        _LOGGER.debug(
+            "Chart data response keys: %s",
+            list(data.keys()) if isinstance(data, dict) else "Not a dict",
+        )
+
+        # Validate that we have the expected data structure
+        if not isinstance(data, dict):
+            _LOGGER.error(
+                "Chart data response is not a dictionary: %s",
+                type(data).__name__,
+            )
+            raise RuntimeError("Invalid chart data response format")
+
+        # Check if we have any data
+        if not data.get("meteringDatetime"):
+            _LOGGER.warning(
+                "No metering data found for POD %s in period %s to %s",
+                pod_id,
+                from_date,
+                to_date,
+            )
+            # Return empty chart data
+            return ChartData()
+
+        # Enhanced validation with detailed error context
         try:
-            # Efficiently get session_pod_id and pod_text in one go
-            target_pod = await self._get_pod_by_stable_id(pod_id)
-            if not target_pod:
-                raise RuntimeError(f"POD not found for stable ID: {pod_id}")
-
-            session_pod_id = target_pod.value
-            pod_text = target_pod.text
-
-            payload = {
-                "pointOfDeliveryId": session_pod_id,
-                "validFromDate": from_date.isoformat(),
-                "validToDate": to_date.isoformat(),
-                "pointOfDeliveryText": pod_text,
-            }
-
+            chart_data = ChartData(**data)
             _LOGGER.debug(
-                "Chart data request: validFromDate=%s, validToDate=%s",
-                payload["validFromDate"],
-                payload["validToDate"],
+                "Retrieved chart data for POD %s, period %s to %s",
+                pod_id,
+                from_date,
+                to_date,
             )
-
-            data = await self._retry_request_with_backoff(
-                "POST", API_CHART, json=payload
+            return chart_data
+        except ValidationError as e:
+            _LOGGER.error(
+                "Chart data validation failed for POD %s (%s to %s). "
+                "Raw API response structure: %s. "
+                "Validation errors: %s",
+                pod_id,
+                from_date,
+                to_date,
+                {
+                    k: f"{type(v).__name__}[{len(v) if isinstance(v, list) else 'scalar'}]"
+                    for k, v in data.items()
+                    if k
+                    in [
+                        "meteringDatetime",
+                        "actualConsumption",
+                        "actualSupply",
+                        "idleConsumption",
+                        "idleSupply",
+                    ]
+                },
+                str(e),
             )
-            _LOGGER.debug(
-                "Chart data response keys: %s",
-                list(data.keys()) if isinstance(data, dict) else "Not a dict",
-            )
-
-            # Validate that we have the expected data structure
-            if not isinstance(data, dict):
-                _LOGGER.error(
-                    "Chart data response is not a dictionary: %s",
-                    type(data).__name__,
-                )
-                raise RuntimeError("Invalid chart data response format")
-
-            # Check if we have any data
-            if not data.get("meteringDatetime"):
-                _LOGGER.warning(
-                    "No metering data found for POD %s in period %s to %s",
-                    pod_id,
-                    from_date,
-                    to_date,
-                )
-                # Return empty chart data
-                return ChartData()
-
-            # Enhanced validation with detailed error context
-            try:
-                chart_data = ChartData(**data)
-                _LOGGER.debug(
-                    "Retrieved chart data for POD %s, period %s to %s",
-                    pod_id,
-                    from_date,
-                    to_date,
-                )
-                return chart_data
-            except ValidationError as e:
-                _LOGGER.error(
-                    "Chart data validation failed for POD %s (%s to %s). "
-                    "Raw API response structure: %s. "
-                    "Validation errors: %s",
-                    pod_id,
-                    from_date,
-                    to_date,
-                    {
-                        k: f"{type(v).__name__}[{len(v) if isinstance(v, list) else 'scalar'}]"
-                        for k, v in data.items()
-                        if k
-                        in [
-                            "meteringDatetime",
-                            "actualConsumption",
-                            "actualSupply",
-                            "idleConsumption",
-                            "idleSupply",
-                        ]
-                    },
-                    str(e),
-                )
-                # Log detailed information about problematic data
-                _LOGGER.error("Raw chart data field analysis:")
-                for field in [
-                    "actualConsumption",
-                    "actualSupply",
-                    "idleConsumption",
-                    "idleSupply",
-                ]:
-                    sample_info = _log_data_sample(data, field)
-                    _LOGGER.error("  %s: %s", field, sample_info)
-                raise RuntimeError(f"Chart data validation failed: {str(e)}") from e
-
-        except ClientError as e:
-            _LOGGER.error("Network error getting chart data: %s", e)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error getting chart data: %s", e)
-            raise
+            # Log detailed information about problematic data
+            _LOGGER.error("Raw chart data field analysis:")
+            for field in [
+                "actualConsumption",
+                "actualSupply",
+                "idleConsumption",
+                "idleSupply",
+            ]:
+                sample_info = _log_data_sample(data, field)
+                _LOGGER.error("  %s: %s", field, sample_info)
+            raise RuntimeError(f"Chart data validation failed: {str(e)}") from e
 
     def _is_pods_cache_valid(self) -> bool:
         """Return True when the cached POD list is still valid."""

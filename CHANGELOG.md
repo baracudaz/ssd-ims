@@ -1,5 +1,11 @@
 # Changelog
 
+## Version 2.1.1
+
+- **Bug fix**: Reduced log noise — duplicate error messages (logged in both the API client and coordinator) are now emitted only once, at the coordinator level
+- **Bug fix**: Session expiry on each scheduled poll (expected behavior) was logged as `WARNING`; downgraded to `DEBUG` since re-authentication is automatic and always handled
+- **Internal**: Added `asyncio_mode = "auto"` to `pyproject.toml` so tests run correctly with a plain `pytest` invocation
+
 ## Version 2.1.0
 
 - **New feature**: Re-authentication flow — when credentials expire, Home Assistant will prompt you to re-enter them without needing to remove and re-add the integration
