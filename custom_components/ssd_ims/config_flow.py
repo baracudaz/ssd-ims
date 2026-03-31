@@ -157,6 +157,8 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return await self.async_step_point_of_delivery()
 
+        return await self.async_step_point_of_delivery()
+
     async def async_step_point_of_delivery(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
@@ -235,6 +237,22 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Pre-populate existing names when reconfiguring via schema defaults
         current_names: dict[str, str] = {}
+        if self._reconfiguring:
+            current_entry = self._get_reconfigure_entry()
+            current_names = current_entry.data.get(CONF_POD_NAME_MAPPING, {})
+
+        schema_fields: dict = {}
+        for pod_id in self._selected_pods:
+            if next((p for p in self._pods if p.id == pod_id), None) is not None:
+                if pod_id in current_names:
+                    schema_fields[
+                        vol.Optional(f"pod_name_{pod_id}", default=current_names[pod_id])
+                    ] = str
+                else:
+                    schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
+
+        # Pre-populate existing names when reconfiguring
+        suggested_values: dict[str, Any] = {}
         if self._reconfiguring:
             current_entry = self._get_reconfigure_entry()
             current_names = current_entry.data.get(CONF_POD_NAME_MAPPING, {})
