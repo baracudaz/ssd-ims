@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 2.1.4
+
+- **Metadata**: Updated integration display name to `Stredoslovenská distribučná (SSD IMS)`
+- **Docs**: Synchronized installation and setup text with the current Home Assistant integration name
+
 ## Version 2.1.3
 
 - **Metadata**: Renamed integration display name to `Stredoslovenská distribučná - Portál energetických dát (SSD IMS)` for clearer identification in Home Assistant
