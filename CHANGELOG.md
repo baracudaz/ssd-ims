@@ -1,5 +1,9 @@
 # Changelog
 
+## Version 2.1.5
+
+- **Maintenance**: Updated release metadata for the 2.1.5 version
+
 ## Version 2.1.4
 
 - **Metadata**: Updated integration display name to `Stredoslovenská distribučná (SSD IMS)`
