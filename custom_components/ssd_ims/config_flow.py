@@ -251,22 +251,6 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
 
-        # Pre-populate existing names when reconfiguring
-        suggested_values: dict[str, Any] = {}
-        if self._reconfiguring:
-            current_entry = self._get_reconfigure_entry()
-            current_names = current_entry.data.get(CONF_POD_NAME_MAPPING, {})
-
-        schema_fields: dict = {}
-        for pod_id in self._selected_pods:
-            if next((p for p in self._pods if p.id == pod_id), None) is not None:
-                if pod_id in current_names:
-                    schema_fields[
-                        vol.Optional(f"pod_name_{pod_id}", default=current_names[pod_id])
-                    ] = str
-                else:
-                    schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
-
         return self.async_show_form(
             step_id="pod_naming",
             data_schema=vol.Schema(schema_fields),
