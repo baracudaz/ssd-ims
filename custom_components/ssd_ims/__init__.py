@@ -202,7 +202,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             match = re.search(r"^([A-Z0-9]+)", pod_text)
                             if match:
                                 pod_number = match.group(1)
-                                for current_pod_text, stable_id in pod_text_to_id.items():
+                                for (
+                                    current_pod_text,
+                                    stable_id,
+                                ) in pod_text_to_id.items():
                                     if current_pod_text.startswith(pod_number):
                                         updated_point_of_delivery.append(stable_id)
                                         _LOGGER.info(
@@ -231,9 +234,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 stable_id,
                             )
                         else:
-                            _LOGGER.warning(
-                                "POD text %s not found, removing", pod_text
-                            )
+                            _LOGGER.warning("POD text %s not found, removing", pod_text)
 
                 if updated_point_of_delivery != point_of_delivery:
                     data[CONF_POINT_OF_DELIVERY] = updated_point_of_delivery

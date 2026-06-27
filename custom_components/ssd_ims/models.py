@@ -108,9 +108,7 @@ class ChartData(BaseModel):
         alias="sumActualConsumption", default=0.0
     )
     sum_actual_supply: float | None = Field(alias="sumActualSupply", default=0.0)
-    sum_idle_consumption: float | None = Field(
-        alias="sumIdleConsumption", default=0.0
-    )
+    sum_idle_consumption: float | None = Field(alias="sumIdleConsumption", default=0.0)
     sum_idle_supply: float | None = Field(alias="sumIdleSupply", default=0.0)
 
     @field_validator(

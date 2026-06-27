@@ -192,7 +192,6 @@ class SsdImsCumulativeSensor(SsdImsEnergySensor):
 
 
 class SsdImsLastUpdateSensor(SsdImsSensor):
-
     def __init__(
         self,
         coordinator: SsdImsDataCoordinator,

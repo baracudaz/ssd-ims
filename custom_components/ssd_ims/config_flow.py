@@ -246,7 +246,9 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if next((p for p in self._pods if p.id == pod_id), None) is not None:
                 if pod_id in current_names:
                     schema_fields[
-                        vol.Optional(f"pod_name_{pod_id}", default=current_names[pod_id])
+                        vol.Optional(
+                            f"pod_name_{pod_id}", default=current_names[pod_id]
+                        )
                     ] = str
                 else:
                     schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
@@ -314,9 +316,13 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SCAN_INTERVAL,
                 current_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
             )
-            stored_days = current_entry.data.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS)
+            stored_days = current_entry.data.get(
+                CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS
+            )
             default_enable_history_import = stored_days > 0
-            default_history_days = stored_days if stored_days > 0 else DEFAULT_HISTORY_DAYS
+            default_history_days = (
+                stored_days if stored_days > 0 else DEFAULT_HISTORY_DAYS
+            )
 
         return self.async_show_form(
             step_id="history_import",
@@ -359,9 +365,7 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             # Update coordinator configuration
             coordinator = self.config_entry.runtime_data
-            await coordinator.update_config(
-                {**self.config_entry.data, **user_input}
-            )
+            await coordinator.update_config({**self.config_entry.data, **user_input})
             return self.async_create_entry(title="", data=user_input)
 
         return self.async_show_form(

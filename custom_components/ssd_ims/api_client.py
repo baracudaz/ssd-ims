@@ -299,9 +299,7 @@ class SsdImsApiClient:
             "isExport": False,
         }
 
-        data = await self._retry_request_with_backoff(
-            "POST", API_DATA, json=payload
-        )
+        data = await self._retry_request_with_backoff("POST", API_DATA, json=payload)
         response_model = MeteringDataResponse(**data)
 
         metering_data = []
@@ -314,13 +312,9 @@ class SsdImsApiClient:
                             values[0].replace("Z", "+00:00")
                         ),
                         period=values[1],
-                        actual_consumption=values[2]
-                        if values[2] is not None
-                        else None,
+                        actual_consumption=values[2] if values[2] is not None else None,
                         actual_supply=values[4] if values[4] is not None else None,
-                        idle_consumption=values[6]
-                        if values[6] is not None
-                        else None,
+                        idle_consumption=values[6] if values[6] is not None else None,
                         idle_supply=values[8] if values[8] is not None else None,
                     )
                 )
@@ -363,9 +357,7 @@ class SsdImsApiClient:
             payload["validToDate"],
         )
 
-        data = await self._retry_request_with_backoff(
-            "POST", API_CHART, json=payload
-        )
+        data = await self._retry_request_with_backoff("POST", API_CHART, json=payload)
         _LOGGER.debug(
             "Chart data response keys: %s",
             list(data.keys()) if isinstance(data, dict) else "Not a dict",
