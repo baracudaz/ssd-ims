@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 2.1.3
+
+- **Metadata**: Renamed integration display name to `Stredoslovenská distribučná - Portál energetických dát (SSD IMS)` for clearer identification in Home Assistant
+- **Docs**: Updated installation and setup wording to reference the new integration display name
+
 ## Version 2.1.1
 
 - **Bug fix**: Reduced log noise — duplicate error messages (logged in both the API client and coordinator) are now emitted only once, at the coordinator level

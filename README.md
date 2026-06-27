@@ -1,6 +1,6 @@
-# SSD IMS Home Assistant Integration
+# Home Assistant Integration for Stredoslovenská distribučná - Portál energetických dát (SSD IMS)
 
-A custom Home Assistant integration for gathering energy consumption and supply data from the Stredoslovenská distribučná SSD IMS portal (ims.ssd.sk) with automatic import into Home Assistant's long-term statistics for use in the Energy dashboard.
+A custom HA integration for gathering energy consumption and supply data from the Portál energetických dát <https://ims.ssd.sk> with automatic import into Home Assistant's long-term statistics for use in the Energy dashboard.
 
 ![Energy dashboard usage](artifacts/screenshots/energy-usage.png)
 
@@ -19,7 +19,7 @@ A custom Home Assistant integration for gathering energy consumption and supply 
 
 ## Data Characteristics
 
-**Data Freshness**: The SSD IMS portal provides day-old data that is published after midnight:
+**Data Freshness**: The Portál energetických dát provides day-old data that is published after midnight:
 
 - Data for the current day is not available
 - The most recent data available is from yesterday
@@ -57,7 +57,7 @@ These statistics can be used directly in the Energy dashboard configuration.
 1. Open HACS in Home Assistant
 2. Click on "Integrations"
 3. Click the "+" button
-4. Search for "SSD IMS"
+4. Search for "Stredoslovenská distribučná - Portál energetických dát (SSD IMS)"
 5. Click "Install"
 6. Restart Home Assistant
 
@@ -74,7 +74,7 @@ These statistics can be used directly in the Energy dashboard configuration.
 
 1. Go to **Settings** → **Devices & Services**
 2. Click **Add Integration**
-3. Search for "SSD IMS"
+3. Search for "Stredoslovenská distribučná - Portál energetických dát (SSD IMS)"
 4. **Step 1 - Credentials**: Enter your SSD IMS portal credentials (<https://ims.ssd.sk>)
 5. **Step 2 - POD Selection**: Select which Points of Delivery to monitor
 6. **Step 3 - POD Names**: Set friendly names for your PODs (optional, e.g., your home address)
@@ -90,7 +90,7 @@ These statistics can be used directly in the Energy dashboard configuration.
 
 ### Options Flow
 
-After setup, you can change the update interval via **Settings** → **Devices & Services** → **SSD IMS** → **Configure**.
+After setup, you can change the update interval via **Settings** → **Devices & Services** → **Stredoslovenská distribučná - Portál energetických dát (SSD IMS)** → **Configure**.
 
 ## Energy Dashboard Setup
 
