@@ -15,7 +15,6 @@ from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN, HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ssd_ims import async_remove_entry
 from custom_components.ssd_ims.const import (
     CONF_HISTORY_DAYS,
     CONF_POD_NAME_MAPPING,
@@ -149,6 +148,10 @@ async def test_removing_entry_clears_its_reauth_issue(hass: HomeAssistant):
     """Core's own cleanup only aborts in-progress reauth flows on removal —
     it doesn't delete the persisted repair issue — so a recreated integration
     would otherwise inherit a repair issue pointing at a dead entry_id.
+
+    Goes through the real `hass.config_entries.async_remove` API (rather than
+    calling our `async_remove_entry` hook directly) so the test actually
+    proves Home Assistant invokes it during entry removal.
     """
     entry = MockConfigEntry(domain=DOMAIN, unique_id="test_user", data={})
     entry.add_to_hass(hass)
@@ -156,6 +159,6 @@ async def test_removing_entry_clears_its_reauth_issue(hass: HomeAssistant):
     issue_id = _create_stale_reauth_issue(hass, entry.entry_id)
     assert ir.async_get(hass).async_get_issue(HOMEASSISTANT_DOMAIN, issue_id)
 
-    await async_remove_entry(hass, entry)
+    await hass.config_entries.async_remove(entry.entry_id)
 
     assert ir.async_get(hass).async_get_issue(HOMEASSISTANT_DOMAIN, issue_id) is None
