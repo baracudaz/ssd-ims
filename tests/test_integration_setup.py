@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN, HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ssd_ims.const import (
@@ -93,3 +94,71 @@ async def test_full_setup_against_real_recorder_and_sensor_platform(
         "sensor state_class incompatible with its device_class"
     )
     assert "Traceback" not in log_text, f"unexpected error during setup:\n{log_text}"
+
+
+def _create_stale_reauth_issue(hass: HomeAssistant, entry_id: str) -> str:
+    """Simulate a reauth repair issue core created on a past auth failure."""
+    issue_id = f"config_entry_reauth_{DOMAIN}_{entry_id}"
+    ir.async_create_issue(
+        hass,
+        HOMEASSISTANT_DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="config_entry_reauth",
+        translation_placeholders={"name": "SSD IMS"},
+    )
+    return issue_id
+
+
+async def test_successful_setup_clears_stale_reauth_issue(hass: HomeAssistant):
+    """A prior auth failure's repair issue may never get cleared by core if
+    the entry recovers without the user completing the reauth flow (e.g. a
+    transient portal-side 401/403 that resolves itself by the next restart).
+    A successful setup should clear it regardless of how auth recovered.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        unique_id="test_user",
+        data={
+            "username": "test_user",
+            "password": "test_pass",
+            CONF_POINT_OF_DELIVERY: [POD_ID],
+            CONF_POD_NAME_MAPPING: {POD_ID: "Home"},
+            CONF_HISTORY_DAYS: 1,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    issue_id = _create_stale_reauth_issue(hass, entry.entry_id)
+    assert ir.async_get(hass).async_get_issue(HOMEASSISTANT_DOMAIN, issue_id)
+
+    with patch(
+        "custom_components.ssd_ims.SsdImsApiClient", return_value=_mock_api_client()
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert ir.async_get(hass).async_get_issue(HOMEASSISTANT_DOMAIN, issue_id) is None
+
+
+async def test_removing_entry_clears_its_reauth_issue(hass: HomeAssistant):
+    """Core's own cleanup only aborts in-progress reauth flows on removal —
+    it doesn't delete the persisted repair issue — so a recreated integration
+    would otherwise inherit a repair issue pointing at a dead entry_id.
+
+    Goes through the real `hass.config_entries.async_remove` API (rather than
+    calling our `async_remove_entry` hook directly) so the test actually
+    proves Home Assistant invokes it during entry removal.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="test_user", data={})
+    entry.add_to_hass(hass)
+
+    issue_id = _create_stale_reauth_issue(hass, entry.entry_id)
+    assert ir.async_get(hass).async_get_issue(HOMEASSISTANT_DOMAIN, issue_id)
+
+    await hass.config_entries.async_remove(entry.entry_id)
+
+    assert ir.async_get(hass).async_get_issue(HOMEASSISTANT_DOMAIN, issue_id) is None

@@ -8,8 +8,9 @@ from pydantic import ValidationError
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api_client import SsdImsApiClient
@@ -21,6 +22,7 @@ from .const import (
     DEFAULT_HISTORY_DAYS,
     DEFAULT_POINT_OF_DELIVERY,
     DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
 )
 from .coordinator import SsdImsDataCoordinator
 from .models import PointOfDelivery
@@ -30,6 +32,25 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor"]
 
 type SsdImsConfigEntry = ConfigEntry[SsdImsDataCoordinator]
+
+
+def _async_clear_reauth_issue(hass: HomeAssistant, entry_id: str) -> None:
+    """Delete this entry's reauth repair issue, if one exists.
+
+    Home Assistant core only clears a `config_entry_reauth_<domain>_<entry_id>`
+    repair issue when a reauth *flow* for that entry is completed or aborted
+    (see core's `ConfigEntriesFlowManager.async_flow_removed`). It does not
+    clear the issue when the entry is removed, nor when authentication simply
+    starts succeeding again through some other path (e.g. a transient
+    portal-side 401/403 that clears up by the next HA restart's automatic
+    `authenticate()` call, without the user ever opening the reauth flow).
+    Both cases would otherwise leave a stale issue behind indefinitely, so we
+    clear it ourselves. `async_delete_issue` is a no-op if the issue doesn't
+    exist.
+    """
+    ir.async_delete_issue(
+        hass, HOMEASSISTANT_DOMAIN, f"config_entry_reauth_{DOMAIN}_{entry_id}"
+    )
 
 
 async def _async_get_pods(
@@ -61,6 +82,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SsdImsConfigEntry) -> bo
 
     if not authenticated:
         raise ConfigEntryAuthFailed("Authentication failed for SSD IMS")
+
+    # Setup just succeeded, so whatever previously triggered a reauth-required
+    # repair issue for this entry (if any) is resolved now, even if the user
+    # never went through the reauth flow itself.
+    _async_clear_reauth_issue(hass, entry.entry_id)
 
     # entry.options takes precedence over entry.data for user-adjustable settings
     scan_interval = entry.options.get(
@@ -96,6 +122,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: SsdImsConfigEntry) -> b
         entry.runtime_data = None
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: SsdImsConfigEntry) -> None:
+    """Clean up when a config entry is removed.
+
+    Core aborts any in-progress reauth *flow* for the removed entry, but
+    leaves a persisted reauth repair issue in place if one exists (see
+    `_async_clear_reauth_issue`), which would otherwise reference a dead
+    entry_id forever.
+    """
+    _async_clear_reauth_issue(hass, entry.entry_id)
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
