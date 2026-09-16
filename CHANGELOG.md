@@ -1,5 +1,9 @@
 # Changelog
 
+## Version 2.2.6
+
+- **Bug fix**: Stale `config_entry_reauth_ssd_ims_<entry_id>` repair issues could linger in Home Assistant's Repairs list indefinitely (fixes #23). Home Assistant core only clears that issue when a reauth *flow* for the entry is completed or aborted — it does neither when the entry is simply removed, nor when authentication starts succeeding again through some other path (e.g. a transient portal-side 401/403 that clears up by the next restart's automatic re-authentication, without the user ever opening the reauth flow). Both cases previously left the issue behind forever, one referencing a live, working entry and the other a dead entry_id after a delete/recreate. The integration now clears its own reauth repair issue itself whenever setup succeeds and when the config entry is removed
+
 ## Version 2.2.5
 
 - **Bug fix**: The `Actual Consumption/Supply Total` sensors could get stuck at `0.0` (or a stale value) indefinitely after the first-ever setup. The background task that runs the initial statistics backfill (deferred out of the config-entry setup path so a large catch-up range can't block Home Assistant's bootstrap timeout) set the smart-polling gate (`_last_successful_data_date`) *before* calling `async_request_refresh()` to pick up the newly imported totals. Since that refresh re-enters `_async_update_data`, which returns the previous, unchanged `coordinator.data` early whenever the gate is already set for today, the premature set made the refresh short-circuit — returning the stale pre-backfill totals (computed when no statistics existed yet) instead of recomputing them from the now-populated statistics. The gate is now only set by `_async_update_data` itself, after it has actually recomputed the totals, matching how every other poll already behaves
