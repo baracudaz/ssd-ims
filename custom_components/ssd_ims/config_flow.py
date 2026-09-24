@@ -1,24 +1,35 @@
 """Configuration flow for SSD IMS integration."""
+
+import asyncio
 import logging
-import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import voluptuous as vol
-from aiohttp import ClientSession
+from aiohttp import ClientError
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api_client import SsdImsApiClient
-from .const import (CONF_ENABLE_IDLE_SENSORS, CONF_ENABLE_SUPPLY_SENSORS,
-                    CONF_POD_NAME_MAPPING, CONF_POINT_OF_DELIVERY,
-                    CONF_SCAN_INTERVAL, DEFAULT_ENABLE_IDLE_SENSORS,
-                    DEFAULT_ENABLE_SUPPLY_SENSORS, DEFAULT_SCAN_INTERVAL,
-                    DOMAIN, NAME, POD_NAME_MAX_LENGTH, POD_NAME_PATTERN,
-                    SCAN_INTERVAL_OPTIONS)
+from .const import (
+    CONF_ENABLE_HISTORY_IMPORT,
+    CONF_HISTORY_DAYS,
+    CONF_POD_NAME_MAPPING,
+    CONF_POINT_OF_DELIVERY,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_ENABLE_HISTORY_IMPORT,
+    DEFAULT_HISTORY_DAYS,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    NAME,
+    POD_NAME_MAX_LENGTH,
+    SCAN_INTERVAL_OPTIONS,
+)
+from .helpers import sanitize_name
 from .models import PointOfDelivery
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,142 +38,223 @@ _LOGGER = logging.getLogger(__name__)
 class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle SSD IMS configuration flow."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         """Initialize config flow."""
-        self._username: Optional[str] = None
-        self._password: Optional[str] = None
-        self._scan_interval: Optional[int] = None
-        self._pods: Optional[List[PointOfDelivery]] = None
-        self._selected_pods: Optional[List[str]] = None
-        self._pod_name_mapping: Optional[Dict[str, str]] = None
-        self._enable_supply_sensors: Optional[bool] = None
-        self._enable_idle_sensors: Optional[bool] = None
+        self._username: str | None = None
+        self._password: str | None = None
+        self._pods: list[PointOfDelivery] | None = None
+        self._selected_pods: list[str] | None = None
+        self._pod_name_mapping: dict[str, str] | None = None
+        self._scan_interval: int | None = None
+        self._enable_history_import: bool | None = None
+        self._history_days: int | None = None
+        self._reconfiguring: bool = False
 
     async def async_step_user(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         """Handle initial user configuration step."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             self._username = user_input[CONF_USERNAME]
             self._password = user_input[CONF_PASSWORD]
-            self._scan_interval = user_input.get(
-                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-            )
 
             try:
-                # Test authentication
-                async with ClientSession() as session:
-                    api_client = SsdImsApiClient(session)
-                    if await api_client.authenticate(self._username, self._password):
-                        # Get available PODs
-                        self._pods = await api_client.get_points_of_delivery()
-                        return await self.async_step_point_of_delivery()
-                    else:
-                        errors["base"] = "invalid_auth"
-            except Exception as e:
+                api_client = SsdImsApiClient(async_get_clientsession(self.hass))
+                if await api_client.authenticate(self._username, self._password):
+                    await self.async_set_unique_id(self._username.lower())
+                    self._abort_if_unique_id_configured()
+                    self._pods = await api_client.get_points_of_delivery()
+                    return await self.async_step_point_of_delivery()
+                else:
+                    errors["base"] = "invalid_auth"
+            except AbortFlow:
+                raise
+            except (ClientError, asyncio.TimeoutError, RuntimeError) as e:
                 _LOGGER.error("Error during authentication: %s", e)
                 errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected error during authentication")
+                errors["base"] = "cannot_connect"
 
-        # Show form
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_USERNAME): str,
                     vol.Required(CONF_PASSWORD): str,
-                    vol.Optional(
-                        CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
-                    ): vol.In(SCAN_INTERVAL_OPTIONS),
                 }
             ),
             errors=errors,
         )
 
-    async def async_step_point_of_delivery(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
-        """Handle point of delivery selection step."""
-        errors = {}
+    async def async_step_reauth(
+        self, entry_data: dict[str, Any]
+    ) -> config_entries.ConfigFlowResult:
+        """Handle re-authentication when credentials are invalid."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Confirm re-authentication with new credentials."""
+        errors: dict[str, str] = {}
+        reauth_entry = self._get_reauth_entry()
 
         if user_input is not None:
-            selected_pods = user_input.get("selected_pods", [])
-            if not selected_pods:
+            try:
+                api_client = SsdImsApiClient(async_get_clientsession(self.hass))
+                if await api_client.authenticate(
+                    user_input[CONF_USERNAME], user_input[CONF_PASSWORD]
+                ):
+                    return self.async_update_reload_and_abort(
+                        reauth_entry,
+                        data_updates={
+                            CONF_USERNAME: user_input[CONF_USERNAME],
+                            CONF_PASSWORD: user_input[CONF_PASSWORD],
+                        },
+                    )
+                errors["base"] = "invalid_auth"
+            except (ClientError, asyncio.TimeoutError, RuntimeError) as e:
+                _LOGGER.error("Error during re-authentication: %s", e)
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected error during re-authentication")
+                errors["base"] = "cannot_connect"
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_USERNAME,
+                        default=reauth_entry.data.get(CONF_USERNAME, ""),
+                    ): str,
+                    vol.Required(CONF_PASSWORD): str,
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "username": reauth_entry.data.get(CONF_USERNAME, ""),
+            },
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle reconfiguration — update POD selection and names."""
+        self._reconfiguring = True
+        current_entry = self._get_reconfigure_entry()
+        self._username = current_entry.data.get(CONF_USERNAME)
+        self._password = current_entry.data.get(CONF_PASSWORD)
+
+        try:
+            api_client = SsdImsApiClient(async_get_clientsession(self.hass))
+            if not await api_client.authenticate(self._username, self._password):
+                return self.async_abort(reason="reauth_required")
+            self._pods = await api_client.get_points_of_delivery()
+        except (ClientError, asyncio.TimeoutError, RuntimeError) as e:
+            _LOGGER.error("Error fetching PODs during reconfigure: %s", e)
+            return self.async_abort(reason="cannot_connect")
+        except Exception:
+            _LOGGER.exception("Unexpected error during reconfigure")
+            return self.async_abort(reason="cannot_connect")
+
+        return await self.async_step_point_of_delivery()
+
+    async def async_step_point_of_delivery(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle point of delivery selection step."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            if not (selected_pods := user_input.get("selected_pods", [])):
                 errors["base"] = "no_pods_selected"
             else:
                 self._selected_pods = selected_pods
                 return await self.async_step_pod_naming()
 
-        # Create POD selection options using stable pod.id instead of session pod.value
-        pod_options = {}
-        for pod in self._pods:
-            try:
-                pod_id = pod.id  # Use stable 16-20 char ID
-                pod_options[pod_id] = pod.text
-            except ValueError as e:
-                _LOGGER.warning(
-                    "Skipping POD with invalid ID format: %s - %s", pod.text, e
-                )
-                continue
+        # Create POD selection options using stable pod.id instead of session
+        # pod.value. get_points_of_delivery() already filters out any POD it
+        # couldn't parse a stable ID for, so every pod here is valid.
+        pod_options = {pod.id: pod.text for pod in self._pods}
+
+        # When reconfiguring, pre-select the currently configured PODs via schema default
+        if self._reconfiguring:
+            current_entry = self._get_reconfigure_entry()
+            current_pods = current_entry.data.get(CONF_POINT_OF_DELIVERY, [])
+            pods_field = vol.Optional("selected_pods", default=current_pods)
+        else:
+            pods_field = vol.Required("selected_pods")
 
         return self.async_show_form(
             step_id="point_of_delivery",
             data_schema=vol.Schema(
                 {
-                    vol.Required("selected_pods"): vol.All(
-                        cv.multi_select(pod_options), vol.Length(min=1)
-                    ),
+                    # No vol.Length(min=1) here: an empty selection needs to
+                    # reach the handler above so it can show the friendlier
+                    # "no_pods_selected" error, rather than voluptuous
+                    # rejecting it first with a generic schema-validation
+                    # error the user never sees a translated message for.
+                    pods_field: cv.multi_select(pod_options),
                 }
             ),
             errors=errors,
         )
 
     async def async_step_pod_naming(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         """Handle POD naming configuration step."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            pod_name_mapping = {}
-            friendly_names = set()
+            pod_name_mapping: dict[str, str] = {}
+            sanitized_names: set[str] = set()
 
-            # Validate POD names using stable pod.id
             for pod_id in self._selected_pods:
-                friendly_name = user_input.get(f"pod_name_{pod_id}", "").strip()
-
-                if friendly_name:
-                    # Validate name format
-                    if not re.match(POD_NAME_PATTERN, friendly_name):
-                        errors[f"pod_name_{pod_id}"] = "invalid_format"
-                        continue
-
-                    # Check length
-                    if len(friendly_name) > POD_NAME_MAX_LENGTH:
+                if display_name := user_input.get(f"pod_name_{pod_id}", "").strip():
+                    if len(display_name) > POD_NAME_MAX_LENGTH:
                         errors[f"pod_name_{pod_id}"] = "too_long"
                         continue
 
-                    # Check uniqueness
-                    if friendly_name in friendly_names:
+                    sanitized_lower = sanitize_name(display_name)
+
+                    if not sanitized_lower:
+                        errors[f"pod_name_{pod_id}"] = "invalid_format"
+                        continue
+
+                    if sanitized_lower in sanitized_names:
                         errors[f"pod_name_{pod_id}"] = "duplicate_name"
                         continue
 
-                    friendly_names.add(friendly_name)
-                    pod_name_mapping[pod_id] = friendly_name
+                    sanitized_names.add(sanitized_lower)
+                    pod_name_mapping[pod_id] = display_name
 
             if not errors:
                 self._pod_name_mapping = pod_name_mapping
-                return await self.async_step_sensor_options()
+                return await self.async_step_history_import()
 
-        # Create POD naming form using stable pod.id
-        schema_fields = {}
+        current_names: dict[str, str] = {}
+        if self._reconfiguring:
+            current_entry = self._get_reconfigure_entry()
+            current_names = current_entry.data.get(CONF_POD_NAME_MAPPING, {})
+
+        schema_fields: dict = {}
         for pod_id in self._selected_pods:
-            # Find pod by stable ID
-            pod = next((p for p in self._pods if p.id == pod_id), None)
-            if pod:
+            if next((p for p in self._pods if p.id == pod_id), None) is not None:
+                if pod_id in current_names:
+                    schema_fields[
+                        vol.Optional(
+                            f"pod_name_{pod_id}", default=current_names[pod_id]
+                        )
+                    ] = str
+                    continue
+
                 schema_fields[vol.Optional(f"pod_name_{pod_id}")] = str
 
         return self.async_show_form(
@@ -176,54 +268,81 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Generate POD information text for the form."""
         info_lines = []
         for pod_id in self._selected_pods:
-            # Find pod by stable ID
-            pod = next((p for p in self._pods if p.id == pod_id), None)
-            if pod:
+            if pod := next((p for p in self._pods if p.id == pod_id), None):
                 info_lines.append(f"• {pod.text} → {pod_id}")
         return "\n".join(info_lines)
 
-    async def async_step_sensor_options(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
-        """Handle sensor options configuration step."""
-        errors = {}
+    async def async_step_history_import(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle final configuration step with update interval and history import."""
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            self._enable_supply_sensors = user_input.get(
-                CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
+            self._scan_interval = user_input.get(
+                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
             )
-            self._enable_idle_sensors = user_input.get(
-                CONF_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_IDLE_SENSORS
+            self._enable_history_import = user_input.get(
+                CONF_ENABLE_HISTORY_IMPORT, DEFAULT_ENABLE_HISTORY_IMPORT
             )
+            self._history_days = user_input.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS)
 
-            # Create config entry
             config_data = {
                 CONF_USERNAME: self._username,
                 CONF_PASSWORD: self._password,
                 CONF_SCAN_INTERVAL: self._scan_interval,
                 CONF_POINT_OF_DELIVERY: self._selected_pods,
                 CONF_POD_NAME_MAPPING: self._pod_name_mapping,
-                CONF_ENABLE_SUPPLY_SENSORS: self._enable_supply_sensors,
-                CONF_ENABLE_IDLE_SENSORS: self._enable_idle_sensors,
+                CONF_HISTORY_DAYS: self._history_days
+                if self._enable_history_import
+                else 0,
             }
+
+            if self._reconfiguring:
+                return self.async_update_reload_and_abort(
+                    self._get_reconfigure_entry(),
+                    data_updates=config_data,
+                    reason="reconfigure_successful",
+                )
 
             return self.async_create_entry(
                 title=f"{NAME} ({self._username})",
                 data=config_data,
             )
 
+        # Pre-populate with current settings when reconfiguring
+        default_scan_interval = DEFAULT_SCAN_INTERVAL
+        default_history_days = DEFAULT_HISTORY_DAYS
+        default_enable_history_import = DEFAULT_ENABLE_HISTORY_IMPORT
+        if self._reconfiguring:
+            current_entry = self._get_reconfigure_entry()
+            default_scan_interval = current_entry.options.get(
+                CONF_SCAN_INTERVAL,
+                current_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+            )
+            stored_days = current_entry.data.get(
+                CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS
+            )
+            default_enable_history_import = stored_days > 0
+            default_history_days = (
+                stored_days if stored_days > 0 else DEFAULT_HISTORY_DAYS
+            )
+
         return self.async_show_form(
-            step_id="sensor_options",
+            step_id="history_import",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        CONF_ENABLE_SUPPLY_SENSORS,
-                        default=DEFAULT_ENABLE_SUPPLY_SENSORS,
+                        CONF_SCAN_INTERVAL, default=default_scan_interval
+                    ): vol.In(SCAN_INTERVAL_OPTIONS),
+                    vol.Optional(
+                        CONF_ENABLE_HISTORY_IMPORT,
+                        default=default_enable_history_import,
                     ): bool,
                     vol.Optional(
-                        CONF_ENABLE_IDLE_SENSORS,
-                        default=DEFAULT_ENABLE_IDLE_SENSORS,
-                    ): bool,
+                        CONF_HISTORY_DAYS,
+                        default=default_history_days,
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=365)),
                 }
             ),
             errors=errors,
@@ -242,39 +361,16 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
     """Handle SSD IMS options flow."""
 
     async def async_step_init(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
         """Manage the options."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Update config entry
-            new_data = self.config_entry.data.copy()
-            new_data[CONF_SCAN_INTERVAL] = user_input[CONF_SCAN_INTERVAL]
-            new_data[CONF_ENABLE_SUPPLY_SENSORS] = user_input.get(
-                CONF_ENABLE_SUPPLY_SENSORS,
-                self.config_entry.data.get(
-                    CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-                ),
-            )
-            new_data[CONF_ENABLE_IDLE_SENSORS] = user_input.get(
-                CONF_ENABLE_IDLE_SENSORS,
-                self.config_entry.data.get(
-                    CONF_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_IDLE_SENSORS
-                ),
-            )
-
-            # Update config entry
-            self.hass.config_entries.async_update_entry(
-                self.config_entry, data=new_data
-            )
-
-            # Update coordinator configuration and trigger refresh if needed
-            from .coordinator import SsdImsDataCoordinator
-            coordinator: SsdImsDataCoordinator = self.hass.data[DOMAIN][self.config_entry.entry_id]
-            await coordinator.update_config(new_data)
-
-            return self.async_create_entry(title="", data={})
+            # Update coordinator configuration
+            coordinator = self.config_entry.runtime_data
+            await coordinator.update_config({**self.config_entry.data, **user_input})
+            return self.async_create_entry(title="", data=user_input)
 
         return self.async_show_form(
             step_id="init",
@@ -282,22 +378,13 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
-                        default=self.config_entry.data.get(
-                            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+                        default=self.config_entry.options.get(
+                            CONF_SCAN_INTERVAL,
+                            self.config_entry.data.get(
+                                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+                            ),
                         ),
                     ): vol.In(SCAN_INTERVAL_OPTIONS),
-                    vol.Optional(
-                        CONF_ENABLE_SUPPLY_SENSORS,
-                        default=self.config_entry.data.get(
-                            CONF_ENABLE_SUPPLY_SENSORS, DEFAULT_ENABLE_SUPPLY_SENSORS
-                        ),
-                    ): bool,
-                    vol.Optional(
-                        CONF_ENABLE_IDLE_SENSORS,
-                        default=self.config_entry.data.get(
-                            CONF_ENABLE_IDLE_SENSORS, DEFAULT_ENABLE_IDLE_SENSORS
-                        ),
-                    ): bool,
                 }
             ),
             errors=errors,

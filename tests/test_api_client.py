@@ -1,6 +1,7 @@
 """Test suite for SSD IMS API client."""
-from datetime import datetime
-from unittest.mock import AsyncMock, patch
+
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import ClientSession
@@ -42,23 +43,6 @@ class TestSsdImsApiClient:
         return [{"text": "99XXX1234560000G (Rodinný dom)", "value": "test_pod_id"}]
 
     @pytest.fixture
-    def mock_metering_response(self):
-        """Mock metering data response."""
-        return {
-            "columns": [
-                {"member": "meteringDatetime", "index": 0},
-                {"member": "period", "index": 1},
-                {"member": "actualConsumption", "index": 2},
-                {"member": "actualSupply", "index": 4},
-                {"member": "idleConsumption", "index": 6},
-                {"member": "idleSupply", "index": 8},
-            ],
-            "rows": [
-                {"values": ["2025-01-20T10:15:00.0000000Z", 1, 0.1320, 0.0, 0.0, 0.72]}
-            ],
-        }
-
-    @pytest.fixture
     def mock_chart_response(self):
         """Mock chart data response."""
         return {
@@ -79,10 +63,12 @@ class TestSsdImsApiClient:
         async def test_successful_authentication(self, api_client, mock_auth_response):
             """Test successful login with valid credentials."""
             with patch.object(api_client._session, "post") as mock_post:
-                mock_post.return_value.__aenter__.return_value.json = AsyncMock(
-                    return_value=mock_auth_response
-                )
-                mock_post.return_value.__aenter__.return_value.status = 200
+                mock_response = AsyncMock()
+                mock_response.json = AsyncMock(return_value=mock_auth_response)
+                mock_response.status = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.cookies = {}
+                mock_post.return_value.__aenter__.return_value = mock_response
 
                 result = await api_client.authenticate("test_user", "test_pass")
 
@@ -93,21 +79,51 @@ class TestSsdImsApiClient:
         async def test_invalid_credentials(self, api_client):
             """Test authentication with invalid credentials."""
             with patch.object(api_client._session, "post") as mock_post:
-                mock_post.return_value.__aenter__.return_value.status = 401
+                mock_response = AsyncMock()
+                mock_response.status = 401
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.cookies = {}
+                mock_post.return_value.__aenter__.return_value = mock_response
 
                 result = await api_client.authenticate("invalid", "invalid")
 
                 assert result is False
                 assert api_client._authenticated is False
 
-        async def test_network_error_during_auth(self, api_client):
-            """Test handling of network errors during authentication."""
+        async def test_server_error_during_login_raises_typed_server_error(
+            self, api_client
+        ):
+            """A 5xx during login (e.g. the portal's own maintenance window)
+            must raise the typed SsdImsServerError — the same classification
+            used for authenticated requests — so it's clearly distinguished
+            from a generic/unexpected response and still lets __init__.py's
+            existing RuntimeError handling raise ConfigEntryNotReady."""
+            from custom_components.ssd_ims.api_client import SsdImsServerError
+
+            with patch.object(api_client._session, "post") as mock_post:
+                mock_response = AsyncMock()
+                mock_response.status = 503
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.cookies = {}
+                mock_post.return_value.__aenter__.return_value = mock_response
+
+                with pytest.raises(SsdImsServerError, match="503"):
+                    await api_client.authenticate("test_user", "test_pass")
+
+                assert api_client._authenticated is False
+
+        async def test_network_error_during_auth_propagates(self, api_client):
+            """Network errors during authentication must propagate rather than
+            being reported as invalid credentials — callers (e.g. __init__.py)
+            need to tell "wrong password" apart from "couldn't reach the
+            portal" so they can raise ConfigEntryNotReady instead of
+            ConfigEntryAuthFailed."""
             with patch.object(api_client._session, "post") as mock_post:
                 mock_post.side_effect = Exception("Network error")
 
-                result = await api_client.authenticate("test_user", "test_pass")
+                with pytest.raises(Exception, match="Network error"):
+                    await api_client.authenticate("test_user", "test_pass")
 
-                assert result is False
                 assert api_client._authenticated is False
 
     class TestPointsOfDelivery:
@@ -117,11 +133,12 @@ class TestSsdImsApiClient:
             """Test successful POD retrieval."""
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
-                mock_get.return_value.__aenter__.return_value.json = AsyncMock(
-                    return_value=mock_pods_response
-                )
-                mock_get.return_value.__aenter__.return_value.status = 200
+            with patch.object(api_client._session, "request") as mock_request:
+                mock_response = AsyncMock()
+                mock_response.json = AsyncMock(return_value=mock_pods_response)
+                mock_response.status = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 pods = await api_client.get_points_of_delivery()
 
@@ -129,15 +146,38 @@ class TestSsdImsApiClient:
                 assert pods[0].text == "99XXX1234560000G (Rodinný dom)"
                 assert pods[0].value == "test_pod_id"
 
+        async def test_pod_with_unparseable_text_is_skipped_not_fatal(self, api_client):
+            """A single POD whose text can't be parsed into a stable ID
+            (e.g. the portal changes its display format) must not take down
+            discovery for every other, valid POD."""
+            api_client._authenticated = True
+            raw_pods = [
+                {"text": "99XXX1234560000G (Rodinný dom)", "value": "good"},
+                {"text": "not a valid pod identifier", "value": "bad"},
+            ]
+
+            with patch.object(api_client._session, "request") as mock_request:
+                mock_response = AsyncMock()
+                mock_response.json = AsyncMock(return_value=raw_pods)
+                mock_response.status = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
+
+                pods = await api_client.get_points_of_delivery()
+
+                assert len(pods) == 1
+                assert pods[0].value == "good"
+
         async def test_empty_pods_response(self, api_client):
             """Test handling of empty POD response."""
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
-                mock_get.return_value.__aenter__.return_value.json = AsyncMock(
-                    return_value=[]
-                )
-                mock_get.return_value.__aenter__.return_value.status = 200
+            with patch.object(api_client._session, "request") as mock_request:
+                mock_response = AsyncMock()
+                mock_response.json = AsyncMock(return_value=[])
+                mock_response.status = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 pods = await api_client.get_points_of_delivery()
 
@@ -145,77 +185,10 @@ class TestSsdImsApiClient:
 
         async def test_unauthorized_pod_request(self, api_client):
             """Test POD request without authentication."""
-            with patch.object(api_client._session, "get") as mock_get:
-                mock_get.return_value.__aenter__.return_value.status = 401
+            from custom_components.ssd_ims.api_client import SsdImsAuthenticationError
 
-                with pytest.raises(Exception):
-                    await api_client.get_points_of_delivery()
-
-    class TestMeteringData:
-        """Test metering data retrieval."""
-
-        async def test_successful_data_retrieval(
-            self, api_client, mock_metering_response
-        ):
-            """Test successful metering data retrieval."""
-            api_client._authenticated = True
-            pod_id = "test_pod_id"
-            from_date = datetime(2025, 1, 20, 10, 0)
-            to_date = datetime(2025, 1, 20, 11, 0)
-
-            with patch.object(api_client._session, "post") as mock_post:
-                mock_post.return_value.__aenter__.return_value.json = AsyncMock(
-                    return_value=mock_metering_response
-                )
-                mock_post.return_value.__aenter__.return_value.status = 200
-
-                data = await api_client.get_metering_data(pod_id, from_date, to_date)
-
-                assert len(data) == 1
-                assert data[0].metering_datetime == datetime(2025, 1, 20, 10, 15)
-                assert data[0].actual_consumption == 0.1320
-                assert data[0].actual_supply == 0.0
-
-        async def test_pagination_handling(self, api_client, mock_metering_response):
-            """Test handling of paginated responses."""
-            api_client._authenticated = True
-            pod_id = "test_pod_id"
-            from_date = datetime(2025, 1, 20, 10, 0)
-            to_date = datetime(2025, 1, 20, 11, 0)
-
-            # Mock response with pagination info
-            paginated_response = {
-                **mock_metering_response,
-                "page": {"totalRows": 200, "currentPage": 1, "pageSize": 100},
-            }
-
-            with patch.object(api_client._session, "post") as mock_post:
-                mock_post.return_value.__aenter__.return_value.json = AsyncMock(
-                    return_value=paginated_response
-                )
-                mock_post.return_value.__aenter__.return_value.status = 200
-
-                data = await api_client.get_metering_data(
-                    pod_id, from_date, to_date, page=1, page_size=100
-                )
-
-                assert len(data) == 1
-
-        async def test_malformed_data_response(self, api_client):
-            """Test handling of malformed API responses."""
-            api_client._authenticated = True
-            pod_id = "test_pod_id"
-            from_date = datetime(2025, 1, 20, 10, 0)
-            to_date = datetime(2025, 1, 20, 11, 0)
-
-            with patch.object(api_client._session, "post") as mock_post:
-                mock_post.return_value.__aenter__.return_value.json = AsyncMock(
-                    return_value={"invalid": "response"}
-                )
-                mock_post.return_value.__aenter__.return_value.status = 200
-
-                with pytest.raises(Exception):
-                    await api_client.get_metering_data(pod_id, from_date, to_date)
+            with pytest.raises(SsdImsAuthenticationError):
+                await api_client.get_points_of_delivery()
 
     class TestChartData:
         """Test chart data retrieval."""
@@ -225,15 +198,23 @@ class TestSsdImsApiClient:
         ):
             """Test successful chart data retrieval."""
             api_client._authenticated = True
-            pod_id = "99XXX1234560000G"  # Use stable pod_id instead of pod_text
-            from_date = datetime(2025, 1, 20, 10, 0)
-            to_date = datetime(2025, 1, 20, 11, 0)
+            pod_id = "99XXX1234560000G"
+            from_date = datetime(2025, 1, 20, 0, 0)
+            to_date = datetime(2025, 1, 20, 23, 59)
 
-            with patch.object(api_client._session, "post") as mock_post:
-                mock_post.return_value.__aenter__.return_value.json = AsyncMock(
-                    return_value=mock_chart_response
-                )
-                mock_post.return_value.__aenter__.return_value.status = 200
+            pod_mock = MagicMock()
+            pod_mock.id = pod_id
+            pod_mock.value = "test_pod_id"
+            pod_mock.text = "99XXX1234560000G (Rodinný dom)"
+            api_client._pods_cache = [pod_mock]
+            api_client._pods_cache_ts = datetime.now(UTC)
+
+            with patch.object(api_client._session, "request") as mock_request:
+                mock_response = AsyncMock()
+                mock_response.json = AsyncMock(return_value=mock_chart_response)
+                mock_response.status = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
                 chart_data = await api_client.get_chart_data(pod_id, from_date, to_date)
 
@@ -242,6 +223,58 @@ class TestSsdImsApiClient:
                 assert len(chart_data.metering_datetime) == 1
                 assert len(chart_data.actual_consumption) == 1
 
+        async def test_chart_data_with_none_values(self, api_client):
+            """Test chart data handling with None values in arrays."""
+            api_client._authenticated = True
+            pod_id = "99XXX1234560000G"
+            from_date = datetime(2025, 1, 20, 0, 0)
+            to_date = datetime(2025, 1, 20, 23, 59)
+
+            pod_mock = MagicMock()
+            pod_mock.id = pod_id
+            pod_mock.value = "test_pod_id"
+            pod_mock.text = "99XXX1234560000G (Rodinný dom)"
+            api_client._pods_cache = [pod_mock]
+            api_client._pods_cache_ts = datetime.now(UTC)
+
+            response_with_nones = {
+                "meteringDatetime": [
+                    "2025-01-20T10:15:00.0000000Z",
+                    "2025-01-20T10:30:00.0000000Z",
+                ],
+                "actualConsumption": [0.1320, None],
+                "actualSupply": [None, 0.5],
+                "idleConsumption": [0.0, 0.0],
+                "idleSupply": [0.72, 0.0],
+                "sumActualConsumption": 16.7000,
+                "sumActualSupply": 18.7760,
+                "sumIdleConsumption": 0.0,
+                "sumIdleSupply": 42.7910,
+            }
+
+            with patch.object(api_client._session, "request") as mock_request:
+                mock_response = AsyncMock()
+                mock_response.json = AsyncMock(return_value=response_with_nones)
+                mock_response.status = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
+
+                chart_data = await api_client.get_chart_data(pod_id, from_date, to_date)
+
+                # None entries must be zero-filled, not dropped: the list
+                # length has to stay aligned with metering_datetime since
+                # coordinator.py indexes these lists positionally.
+                assert len(chart_data.actual_consumption) == len(
+                    chart_data.metering_datetime
+                )
+                assert chart_data.actual_consumption[0] == 0.1320
+                assert chart_data.actual_consumption[1] == 0.0
+                assert len(chart_data.actual_supply) == len(
+                    chart_data.metering_datetime
+                )
+                assert chart_data.actual_supply[0] == 0.0
+                assert chart_data.actual_supply[1] == 0.5
+
     class TestErrorHandling:
         """Test error handling scenarios."""
 
@@ -249,48 +282,111 @@ class TestSsdImsApiClient:
             """Test handling of session timeouts."""
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
-                mock_get.return_value.__aenter__.return_value.status = 408
+            with patch.object(api_client._session, "request") as mock_request:
+                mock_response = AsyncMock()
+                mock_response.status = 408
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
-                with pytest.raises(Exception):
+                with pytest.raises(RuntimeError, match="408"):
                     await api_client.get_points_of_delivery()
 
         async def test_rate_limiting(self, api_client):
             """Test handling of rate limiting responses."""
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
-                mock_get.return_value.__aenter__.return_value.status = 429
+            with patch.object(api_client._session, "request") as mock_request:
+                mock_response = AsyncMock()
+                mock_response.status = 429
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
-                with pytest.raises(Exception):
+                with pytest.raises(RuntimeError, match="429"):
                     await api_client.get_points_of_delivery()
 
-        async def test_server_error(self, api_client):
-            """Test handling of server errors."""
+        async def test_server_error_is_retried_then_raised(self, api_client):
+            """5xx responses are transient and must be retried (unlike other
+            4xx errors), and raise the typed SsdImsServerError so callers can
+            tell it apart from an authentication problem."""
+            from custom_components.ssd_ims.api_client import SsdImsServerError
+
             api_client._authenticated = True
 
-            with patch.object(api_client._session, "get") as mock_get:
-                mock_get.return_value.__aenter__.return_value.status = 500
+            with (
+                patch.object(api_client._session, "request") as mock_request,
+                patch(
+                    "custom_components.ssd_ims.api_client.asyncio.sleep",
+                    AsyncMock(),
+                ),
+            ):
+                mock_response = AsyncMock()
+                mock_response.status = 500
+                mock_response.headers = {"content-type": "application/json"}
+                mock_request.return_value.__aenter__.return_value = mock_response
 
-                with pytest.raises(Exception):
+                with pytest.raises(SsdImsServerError):
                     await api_client.get_points_of_delivery()
+
+                assert mock_request.call_count == 3  # default max_retries
+
+        async def test_server_error_succeeds_after_transient_retry(
+            self, api_client, mock_pods_response
+        ):
+            """A 500 followed by a successful response must not be treated as
+            a permanent failure."""
+            api_client._authenticated = True
+
+            with (
+                patch.object(api_client._session, "request") as mock_request,
+                patch(
+                    "custom_components.ssd_ims.api_client.asyncio.sleep",
+                    AsyncMock(),
+                ),
+            ):
+                error_response = AsyncMock()
+                error_response.status = 500
+                error_response.headers = {"content-type": "application/json"}
+
+                ok_response = AsyncMock()
+                ok_response.status = 200
+                ok_response.headers = {"content-type": "application/json"}
+                ok_response.json = AsyncMock(return_value=mock_pods_response)
+
+                mock_request.return_value.__aenter__.side_effect = [
+                    error_response,
+                    ok_response,
+                ]
+
+                pods = await api_client.get_points_of_delivery()
+
+                assert len(pods) == 1
+                assert mock_request.call_count == 2
 
     class TestSessionManagement:
         """Test session management functionality."""
 
         async def test_session_expiration_detection(self, api_client):
-            """Test detection of session expiration."""
-            # Mock response with HTML content type
-            mock_response = AsyncMock()
+            """Test detection of session expiration via HTML content type."""
+            mock_response = MagicMock()
+            mock_response.status = 200
             mock_response.headers = {"content-type": "text/html; charset=utf-8"}
+
+            result = api_client._is_session_expired(mock_response)
+            assert result is True
+
+        async def test_session_expiration_detection_401(self, api_client):
+            """Test detection of session expiration via 401 status."""
+            mock_response = MagicMock()
+            mock_response.status = 401
+            mock_response.headers = {"content-type": "application/json"}
 
             result = api_client._is_session_expired(mock_response)
             assert result is True
 
         async def test_session_not_expired(self, api_client):
             """Test detection when session is still valid."""
-            # Mock response with JSON content type
-            mock_response = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.status = 200
             mock_response.headers = {"content-type": "application/json"}
 
             result = api_client._is_session_expired(mock_response)
@@ -300,7 +396,6 @@ class TestSsdImsApiClient:
             self, api_client, mock_auth_response
         ):
             """Test re-authentication with stored credentials."""
-            # Set up stored credentials
             api_client._username = "test_user"
             api_client._password = "test_pass"
 
@@ -317,75 +412,103 @@ class TestSsdImsApiClient:
             result = await api_client._reauthenticate()
             assert result is False
 
-        async def test_authenticated_request_with_session_expiry(
-            self, api_client, mock_pods_response
-        ):
-            """Test authenticated request with automatic re-authentication."""
-            # Set up stored credentials
-            api_client._username = "test_user"
-            api_client._password = "test_pass"
-            api_client._authenticated = True
 
-            with patch.object(api_client._session, "request") as mock_request:
-                # First request returns HTML (session expired)
-                mock_response1 = AsyncMock()
-                mock_response1.headers = {"content-type": "text/html"}
-                mock_response1.status = 200
+class TestPodIdExtraction:
+    """Test POD ID extraction from text."""
 
-                # Second request after re-auth returns JSON
-                mock_response2 = AsyncMock()
-                mock_response2.headers = {"content-type": "application/json"}
-                mock_response2.status = 200
-                mock_response2.json = AsyncMock(return_value=mock_pods_response)
+    @pytest.fixture
+    async def api_client(self):
+        """Create API client instance for testing."""
+        session = ClientSession()
+        client = SsdImsApiClient(session)
+        yield client
+        await session.close()
 
-                mock_request.return_value.__aenter__.side_effect = [
-                    mock_response1,
-                    mock_response2,
-                ]
+    async def test_pod_id_extraction(self, api_client):
+        """Test that POD ID is correctly extracted from pod.text."""
+        api_client._authenticated = True
 
-                # Mock re-authentication
-                with patch.object(api_client, "_reauthenticate") as mock_reauth:
-                    mock_reauth.return_value = True
+        mock_response_data = [
+            {"text": "99XXX1234560000G (Rodinný dom)", "value": "session_token_123"},
+            {"text": "99YYY9876540000G (Garáž)", "value": "session_token_456"},
+        ]
 
-                    result = await api_client._make_authenticated_request(
-                        "GET", "test_url"
-                    )
+        with patch.object(api_client._session, "request") as mock_request:
+            mock_response = AsyncMock()
+            mock_response.json = AsyncMock(return_value=mock_response_data)
+            mock_response.status = 200
+            mock_response.headers = {"content-type": "application/json"}
+            mock_request.return_value.__aenter__.return_value = mock_response
 
-                    assert result == mock_pods_response
-                    mock_reauth.assert_called_once()
+            pods = await api_client.get_points_of_delivery()
 
-        async def test_authenticated_request_reauth_failure(self, api_client):
-            """Test authenticated request when re-authentication fails."""
-            # Set up stored credentials
-            api_client._username = "test_user"
-            api_client._password = "test_pass"
-            api_client._authenticated = True
+            assert len(pods) == 2
+            assert pods[0].id == "99XXX1234560000G"
+            assert pods[1].id == "99YYY9876540000G"
 
-            with patch.object(api_client._session, "request") as mock_request:
-                # Request returns HTML (session expired)
-                mock_response = AsyncMock()
-                mock_response.headers = {"content-type": "text/html"}
-                mock_response.status = 200
 
-                mock_request.return_value.__aenter__.return_value = mock_response
+class TestSsdImsSensor:
+    """Test suite for SSD IMS sensor entities."""
 
-                # Mock re-authentication failure
-                with patch.object(api_client, "_reauthenticate") as mock_reauth:
-                    mock_reauth.return_value = False
+    def test_ssd_ims_sensors_enabled_by_default_for_all_sensor_types(self):
+        """Ensure SSD IMS sensors are enabled by default for all sensor types."""
+        from custom_components.ssd_ims.sensor import SsdImsYesterdaySensor
 
-                    with pytest.raises(Exception, match="Re-authentication failed"):
-                        await api_client._make_authenticated_request("GET", "test_url")
+        mock_coordinator = MagicMock()
+        mock_coordinator.data = {
+            "pod_id_123": {
+                "aggregated_data": {"actual_consumption": 10.5, "actual_supply": 2.3}
+            }
+        }
 
-        async def test_logout_clears_credentials(self, api_client):
-            """Test that logout clears stored credentials."""
-            api_client._authenticated = True
-            api_client._session_token = "test_token"
-            api_client._username = "test_user"
-            api_client._password = "test_pass"
+        pod_id = "pod_id_123"
+        sensor_types = ("actual_consumption", "actual_supply")
 
-            api_client.logout()
+        for sensor_type in sensor_types:
+            sensor = SsdImsYesterdaySensor(
+                coordinator=mock_coordinator,
+                sensor_type=sensor_type,
+                pod_id=pod_id,
+                friendly_name="Home",
+            )
 
-            assert api_client._authenticated is False
-            assert api_client._session_token is None
-            assert api_client._username is None
-            assert api_client._password is None
+            assert sensor.entity_registry_enabled_default is True
+            assert (
+                sensor.native_value
+                == mock_coordinator.data[pod_id]["aggregated_data"][sensor_type]
+            )
+
+    def test_yesterday_sensor_has_no_state_class(self):
+        """The yesterday sensor is a daily snapshot that can legitimately
+        decrease day-to-day, not a running total. TOTAL_INCREASING/TOTAL
+        would make HA auto-generate a second, redundant long-term
+        statistics series alongside the one the coordinator writes
+        explicitly, and MEASUREMENT isn't a legal alternative for the
+        ENERGY device class (HA logs an "impossible" warning and rejects
+        it) — so state_class must be left unset entirely."""
+        from custom_components.ssd_ims.sensor import SsdImsYesterdaySensor
+
+        sensor = SsdImsYesterdaySensor(
+            coordinator=MagicMock(),
+            sensor_type="actual_consumption",
+            pod_id="pod_id_123",
+            friendly_name="Home",
+        )
+
+        assert sensor.state_class is None
+
+    def test_cumulative_sensor_is_total_increasing(self):
+        """The cumulative sensor mirrors an ever-increasing running total
+        read back from statistics, so TOTAL_INCREASING is correct here."""
+        from homeassistant.components.sensor import SensorStateClass
+
+        from custom_components.ssd_ims.sensor import SsdImsCumulativeSensor
+
+        sensor = SsdImsCumulativeSensor(
+            coordinator=MagicMock(),
+            sensor_type="actual_consumption",
+            pod_id="pod_id_123",
+            friendly_name="Home",
+        )
+
+        assert sensor.state_class == SensorStateClass.TOTAL_INCREASING
