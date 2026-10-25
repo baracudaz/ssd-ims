@@ -318,18 +318,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                             current_date += timedelta(days=1)
                             continue
 
-                        if day_start == last_pending_day:
-                            got_last_day_data = True
                         hourly_data: dict[datetime, float] = {}
                         for i, timestamp_str in enumerate(chart_data.metering_datetime):
-                            value = (
-                                chart_data.actual_consumption[i]
-                                if sensor_type == SENSOR_TYPE_ACTUAL_CONSUMPTION
-                                else chart_data.actual_supply[i]
-                            )
-                            if value is None:
-                                continue
-
                             timestamp_end_utc = datetime.fromisoformat(
                                 timestamp_str.replace("Z", "+00:00")
                             )
@@ -341,6 +331,20 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                             # attributed to two days.
                             if not day_start <= timestamp_start_utc < day_end:
                                 continue
+                            # Judged after the boundary filter: the previous
+                            # day's final reading alone must not mark the
+                            # pending day as published.
+                            if day_start == last_pending_day:
+                                got_last_day_data = True
+
+                            value = (
+                                chart_data.actual_consumption[i]
+                                if sensor_type == SENSOR_TYPE_ACTUAL_CONSUMPTION
+                                else chart_data.actual_supply[i]
+                            )
+                            if value is None:
+                                continue
+
                             hour_timestamp = timestamp_start_utc.replace(
                                 minute=0, second=0, microsecond=0
                             )

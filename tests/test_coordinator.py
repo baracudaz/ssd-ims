@@ -1,7 +1,7 @@
 """Regression tests for SsdImsDataCoordinator statistics import logic."""
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,7 +30,7 @@ def _make_coordinator(api_client, config):
 
 def _chart_data(day_start: datetime, value: float = 1.0) -> ChartData:
     """One reading stamped 10:15 into the requested day."""
-    stamp = day_start + timedelta(hours=10, minutes=15)
+    stamp = (day_start + timedelta(hours=10, minutes=15)).astimezone(UTC)
     return ChartData(
         meteringDatetime=[stamp.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")],
         actualConsumption=[value],
@@ -111,7 +111,7 @@ def _portal_chart_data(valid_from, valid_to, *, include_from: bool) -> ChartData
 
     The upper bound is always inclusive. include_from=True also returns the
     reading stamped exactly at valid_from (which belongs to the previous day),
-    modelling the most permissive boundary behaviour the portal could have.
+    modeling the most permissive boundary behavior the portal could have.
     """
     stamps = []
     stamp = valid_from if include_from else valid_from + timedelta(minutes=15)
@@ -129,6 +129,33 @@ def _portal_chart_data(valid_from, valid_to, *, include_from: bool) -> ChartData
         sumIdleConsumption=0.0,
         sumIdleSupply=0.0,
     )
+
+
+async def _run_import_at(coordinator, frozen_now):
+    """Run the statistics import with "now" frozen; return (result, add_stats mock)."""
+    with (
+        patch(
+            "custom_components.ssd_ims.coordinator.dt_util.now",
+            return_value=frozen_now,
+        ),
+        patch(
+            "custom_components.ssd_ims.coordinator.get_instance"
+        ) as mock_get_instance,
+        patch(
+            "custom_components.ssd_ims.coordinator.get_last_statistics",
+            return_value={},
+        ),
+        patch(
+            "custom_components.ssd_ims.coordinator.async_add_external_statistics"
+        ) as mock_add_stats,
+        patch("custom_components.ssd_ims.coordinator.asyncio.sleep", AsyncMock()),
+    ):
+        mock_instance = MagicMock()
+        mock_instance.async_add_executor_job = AsyncMock(side_effect=_run_executor)
+        mock_get_instance.return_value = mock_instance
+
+        result = await coordinator._update_statistics_locked(["pod_1"])
+    return result, mock_add_stats
 
 
 class TestStatisticsDayBoundaries:
@@ -155,6 +182,7 @@ class TestStatisticsDayBoundaries:
     async def test_every_quarter_hour_is_imported_exactly_once(
         self, now, expected_hours_per_day, include_from
     ):
+        """Each local hour, including 23:00 and DST-shifted ones, gets 4 quarters."""
         tz = dt_util.get_time_zone("Europe/Bratislava")
         frozen_now = datetime.fromisoformat(now).replace(tzinfo=tz)
 
@@ -168,28 +196,7 @@ class TestStatisticsDayBoundaries:
             api_client, {CONF_HISTORY_DAYS: 3, CONF_POD_NAME_MAPPING: {}}
         )
 
-        with (
-            patch(
-                "custom_components.ssd_ims.coordinator.dt_util.now",
-                return_value=frozen_now,
-            ),
-            patch(
-                "custom_components.ssd_ims.coordinator.get_instance"
-            ) as mock_get_instance,
-            patch(
-                "custom_components.ssd_ims.coordinator.get_last_statistics",
-                return_value={},
-            ),
-            patch(
-                "custom_components.ssd_ims.coordinator.async_add_external_statistics"
-            ) as mock_add_stats,
-            patch("custom_components.ssd_ims.coordinator.asyncio.sleep", AsyncMock()),
-        ):
-            mock_instance = MagicMock()
-            mock_instance.async_add_executor_job = AsyncMock(side_effect=_run_executor)
-            mock_get_instance.return_value = mock_instance
-
-            result = await coordinator._update_statistics_locked(["pod_1"])
+        result, mock_add_stats = await _run_import_at(coordinator, frozen_now)
 
         assert result is True
 
@@ -221,6 +228,37 @@ class TestStatisticsDayBoundaries:
             )
             # The first hour is local midnight of the first imported day.
             assert dt_util.as_local(starts[0]).astimezone(tz).hour == 0
+
+    async def test_previous_days_boundary_reading_alone_is_not_yesterdays_data(self):
+        """Yesterday must stay pending until a reading *within* it is published.
+
+        A portal that includes the reading stamped exactly at valid_from returns
+        the previous day's final quarter-hour even before yesterday itself is
+        published. That reading is rightly filtered out of yesterday's stats,
+        and it must not mark yesterday as complete either — otherwise smart
+        polling would skip the rest of the day with yesterday still missing.
+        """
+        tz = dt_util.get_time_zone("Europe/Bratislava")
+        frozen_now = datetime(2026, 10, 24, 10, 0, tzinfo=tz)
+        yesterday_start = datetime(2026, 10, 23, tzinfo=tz)
+
+        def portal(pod_id, valid_from, valid_to):
+            if valid_from == yesterday_start.astimezone(UTC):
+                # Not published yet: only the boundary reading comes back.
+                return _portal_chart_data(valid_from, valid_from, include_from=True)
+            return _portal_chart_data(valid_from, valid_to, include_from=True)
+
+        api_client = MagicMock()
+        api_client.get_chart_data = AsyncMock(side_effect=portal)
+        coordinator = _make_coordinator(
+            api_client, {CONF_HISTORY_DAYS: 3, CONF_POD_NAME_MAPPING: {}}
+        )
+
+        result, mock_add_stats = await _run_import_at(coordinator, frozen_now)
+
+        assert result is False
+        # Only the two published days are flushed, per sensor type.
+        assert mock_add_stats.call_count == 4
 
 
 class TestBackgroundBackfillGateOrdering:
