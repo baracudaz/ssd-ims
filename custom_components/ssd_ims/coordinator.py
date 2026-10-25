@@ -299,7 +299,11 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 current_date = start_date
                 while current_date < end_date:
                     day_start = current_date
-                    day_end = day_start + timedelta(days=1) - timedelta(seconds=1)
+                    # Exclusive end (next local midnight). The portal stamps each
+                    # quarter-hour by its *end* time, so the 23:45–24:00 reading
+                    # is stamped 00:00 of the next day — ending the request at
+                    # 23:59:59 silently dropped it every day (#28).
+                    day_end = day_start + timedelta(days=1)
 
                     try:
                         await asyncio.sleep(self._get_random_api_delay())
@@ -332,6 +336,11 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                             timestamp_start_utc = timestamp_end_utc - timedelta(
                                 minutes=15
                             )
+                            # Only count quarter-hours that *start* within this
+                            # day, so a reading at the request boundary is never
+                            # attributed to two days.
+                            if not day_start <= timestamp_start_utc < day_end:
+                                continue
                             hour_timestamp = timestamp_start_utc.replace(
                                 minute=0, second=0, microsecond=0
                             )
