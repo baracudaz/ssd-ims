@@ -67,7 +67,7 @@ Home Assistant neuplatní cenu z panela Energie na údaje importované touto int
 
 **Kde nájdete ceny:** na faktúre od dodávateľa — SSE ich uvádza pod nadpisom *Aktuálne koncové ceny elektriny platné pre Vašu sadzbu*. Tieto koncové ceny už obsahujú silovú elektrinu, distribúciu, poplatky aj DPH, položky faktúry preto nesčítavajte sami. Mesačné poplatky (napr. za istič) v nákladoch nie sú.
 
-**Majte na pamäti:** celá história sa ocení aktuálnou cenou, staršie náklady sú preto len orientačné.
+**Majte na pamäti:** integrácia pozná len cenu, ktorú práve zadáte. Pri prvom zadaní cien sa ňou ocení celá importovaná história, hoci v minulých rokoch boli ceny iné — staršie náklady sú preto len orientačné. Neskoršia zmena ceny prepočíta len zhruba posledné dva mesiace, staršie obdobia si ponechajú pôvodnú cenu.
 
 ![Mesačný prehľad spotreby a nákladov](artifacts/screenshots/energy-month.png)
 
