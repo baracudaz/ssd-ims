@@ -19,7 +19,7 @@
       },
       "point_of_delivery": {
         "title": "Vyberte odberné miesta",
-        "description": "Vyberte ktoré odberné miesta chcete monitorovať",
+        "description": "Vyberte odberné miesta, ktoré chcete sledovať. Každé je označené EIC kódom odberného miesta – 16-miestnym kódom, ktorý nájdete na faktúre.",
         "data": {
           "selected_pods": "Odberné miesta"
         }

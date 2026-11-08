@@ -17,7 +17,7 @@ Integrácia sťahuje údaje o spotrebe a dodávke elektriny z Portálu energetic
 - **Automatické aktualizácie**: nastaviteľný interval (6, 12 alebo 24 hodín)
 - **Opätovné prihlásenie**: keď prihlasovacie údaje prestanú platiť, Home Assistant vás vyzve na ich zadanie bez odstránenia integrácie
 - **Rekonfigurácia**: výber a názvy odberných miest zmeníte kedykoľvek cez **Rekonfigurácia**
-- **Diagnostika**: diagnostické údaje na riešenie problémov (bez prihlasovacích údajov a čísel odberných miest)
+- **Diagnostika**: diagnostické údaje na riešenie problémov (bez prihlasovacích údajov a EIC kódov odberných miest)
 
 ## Aké údaje sú k dispozícii
 
@@ -116,7 +116,7 @@ Majte na pamäti:
 2. Zvoľte **Pridať integráciu**
 3. Vyhľadajte „Stredoslovenská distribučná (SSD IMS)“
 4. **Krok 1 – prihlásenie**: zadajte prihlasovacie údaje do portálu <https://ims.ssd.sk>
-5. **Krok 2 – odberné miesta**: vyberte odberné miesta, ktoré chcete sledovať
+5. **Krok 2 – odberné miesta**: vyberte odberné miesta, ktoré chcete sledovať (sú označené EIC kódom odberného miesta, ktorý nájdete na faktúre)
 6. **Krok 3 – názvy**: zadajte vlastné názvy odberných miest (nepovinné, napr. adresa)
 7. **Krok 4 – import a aktualizácie**: nastavte interval aktualizácie a import histórie
 
@@ -190,7 +190,7 @@ logger:
     custom_components.ssd_ims: debug
 ```
 
-Ak problém nahlasujete, pripojte diagnostické údaje (**Nastavenia** → **Zariadenia a služby** → integrácia → ⋮ → **Stiahnuť diagnostické údaje**) — neobsahujú prihlasovacie údaje ani čísla odberných miest.
+Ak problém nahlasujete, pripojte diagnostické údaje (**Nastavenia** → **Zariadenia a služby** → integrácia → ⋮ → **Stiahnuť diagnostické údaje**) — neobsahujú prihlasovacie údaje ani EIC kódy odberných miest.
 
 ## Autori
 

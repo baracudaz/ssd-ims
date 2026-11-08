@@ -19,7 +19,7 @@
       },
       "point_of_delivery": {
         "title": "Select Points of Delivery",
-        "description": "Choose which Points of Delivery to monitor",
+        "description": "Choose which Points of Delivery to monitor. Each is identified by its EIC code, the 16-character code printed on your invoice.",
         "data": {
           "selected_pods": "Points of Delivery"
         }
