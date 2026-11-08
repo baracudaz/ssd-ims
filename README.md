@@ -126,10 +126,10 @@ After setup, you can change these via **Settings** → **Devices & Services** �
 | Option | Description |
 |--------|-------------|
 | Update Interval | How often to check for new data |
-| High tariff (VT) price | Optional. Final price in EUR per kWh incl. VAT and all per-kWh fees — enables the `cost_vt` statistic |
-| Low tariff (NT) price | Optional. Same for NT — enables the `cost_nt` statistic. Leave empty for single-rate tariffs (D1/D2): the VT price is then used for all consumption |
+| High tariff (VT) price | Optional. Final price in EUR per kWh incl. VAT and all per-kWh fees — enables the hourly `actual_consumption_cost` and the monthly `cost_vt` statistics |
+| Low tariff (NT) price | Optional. Same for NT — enables the monthly `cost_nt` statistic. Leave empty for single-rate tariffs (D1/D2): the VT price is then used for all consumption |
 
-Your supplier invoice usually lists these final prices (e.g. SSE prints them as *Aktuálne koncové ceny elektriny platné pre Vašu sadzbu*). Use those rather than adding up the invoice's line items yourself — the final price already contains supply, distribution, losses and the per-kWh regulated fees (system operation TPS, system services TSS, nuclear fund levy NJF) plus VAT, which are easy to leave out of a manual sum. Fixed monthly fees (supplier fee, distribution fee by breaker size) can't be represented in the Energy dashboard and are not included. A price change applies to months imported afterwards; already imported months are not recalculated, and the first import computes all past months at the current price.
+Your supplier invoice usually lists these final prices (e.g. SSE prints them as *Aktuálne koncové ceny elektriny platné pre Vašu sadzbu*). Use those rather than adding up the invoice's line items yourself — the final price already contains supply, distribution, losses and the per-kWh regulated fees (system operation TPS, system services TSS, nuclear fund levy NJF) plus VAT, which are easy to leave out of a manual sum. Fixed monthly fees (supplier fee, distribution fee by breaker size) can't be represented in the Energy dashboard and are not included. Saving the options applies the prices right away. The first import prices all history at the current price. After a price change, the monthly `cost_vt` / `cost_nt` keep the old price for months already imported, while the hourly `actual_consumption_cost` is recalculated with the new price for the last three register periods (roughly the last two months plus the current one); older hours keep the old price.
 
 ## Energy Dashboard Setup
 
@@ -157,7 +157,7 @@ Home Assistant only applies a price configured in the Energy dashboard to statis
 
 - Python 3.14+
 - Docker and Docker Compose
-- Home Assistant 2026.2+
+- Home Assistant 2026.10+ (the pinned version is installed into `.venv` by `make install`)
 
 ### Setup Development Environment
 
