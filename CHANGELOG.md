@@ -2,7 +2,7 @@
 
 ## Version 2.4.0
 
-- **New feature**: Prices from the SSE eZóna integration (`sse_ezona`, 0.3.0+). When its price sensors exist for a point with the same EIC code (matched by unique_id `ELECTRICITY_<EIC>_price_vt` / `_nt` / `_jt`), they are used for the hourly and monthly costs instead of the prices in the options. Until they have a value (e.g. right after a restart), that point's costs are computed on a later run.
+- **New feature**: Prices from the SSE eZóna integration (`sse_ezona`, 0.3.0+). When its price sensors exist for a point with the same EIC code (matched by unique_id `ELECTRICITY_<EIC>_price_vt` / `_nt` / `_jt`), they are used for the hourly and monthly costs instead of the prices in the options. When one of them changes or gets its value after a restart, the costs are recomputed right away from the cached register readings, without new portal requests. While any of them has no value, that point gets no price, so night consumption is never costed at the VT price.
 
 ## Version 2.3.0
 
