@@ -2,7 +2,7 @@
 counter → delta conversion and statistics import."""
 
 import asyncio
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +16,7 @@ from custom_components.ssd_ims.const import (
     CONF_PRICE_VT,
 )
 from custom_components.ssd_ims.coordinator import SsdImsDataCoordinator
+from custom_components.ssd_ims.helpers import PriceHistory
 from custom_components.ssd_ims.models import REGISTRY_COLUMNS, RegistryReading
 
 POD_ID = "99XXX1234560000G"
@@ -520,11 +521,17 @@ class TestHourlyCostSinglePrice:
         """Single-rate tariffs (D1/D2) only have one price."""
         import_costs = await self._run({CONF_PRICE_VT: 0.3})
         import_costs.assert_awaited_once()
-        assert import_costs.await_args.args[-2:] == (0.3, 0.3)
+        assert import_costs.await_args.args[-2:] == (
+            PriceHistory(0.3),
+            PriceHistory(0.3),
+        )
 
     async def test_both_prices_are_used_as_given(self):
         import_costs = await self._run({CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.1})
-        assert import_costs.await_args.args[-2:] == (0.3, 0.1)
+        assert import_costs.await_args.args[-2:] == (
+            PriceHistory(0.3),
+            PriceHistory(0.1),
+        )
 
     async def test_nt_price_alone_imports_no_hourly_cost(self):
         import_costs = await self._run({CONF_PRICE_NT: 0.1})
@@ -648,7 +655,10 @@ class TestHourlyCostSupplierPrices:
             return_value=recorder,
         ):
             await coordinator._update_hourly_costs([POD_ID])
-        assert coordinator._import_hourly_costs.await_args.args[-2:] == (0.25, 0.14)
+        assert coordinator._import_hourly_costs.await_args.args[-2:] == (
+            PriceHistory(0.25),
+            PriceHistory(0.14),
+        )
 
 
 def _state_event(old, new):
@@ -760,3 +770,182 @@ class TestSupplierPriceChanges:
 
         coordinator.async_unwatch_supplier_prices()
         unsub.assert_called_once()
+
+
+H0 = datetime(2026, 11, 1, 0, tzinfo=UTC)
+
+
+class TestPriceHistory:
+    """A price applies from the hour it changed, never retroactively."""
+
+    def test_without_history_the_current_price_applies_everywhere(self):
+        """Fixed prices from the options."""
+        history = PriceHistory(0.3)
+        assert history.at(H0) == history.at(H0 + timedelta(days=400)) == 0.3
+
+    def test_price_applies_from_its_hour_until_the_next_change(self):
+        """Hours between known values keep the previous value."""
+        history = PriceHistory(0.2, [(H0 + timedelta(hours=5), 0.2), (H0, 0.1)])
+        assert history.at(H0) == 0.1
+        assert history.at(H0 + timedelta(hours=4, minutes=59)) == 0.1
+        assert history.at(H0 + timedelta(hours=5)) == 0.2
+        assert history.at(H0 + timedelta(days=30)) == 0.2
+
+    def test_hours_before_the_history_use_the_first_known_price(self):
+        """The price entity didn't exist yet: best guess is its first value."""
+        history = PriceHistory(0.2, [(H0, 0.1)])
+        assert history.at(H0 - timedelta(days=60)) == 0.1
+
+
+class TestSupplierPriceHistory:
+    """Supplier prices are read hour by hour from long-term statistics."""
+
+    async def _histories(self, entities, means, supplier=(0.25, 0.14)):
+        """Run _pod_price_histories with the given registry and statistics."""
+        coordinator = _make_coordinator(MagicMock(), {})
+        coordinator._supplier_prices = MagicMock(return_value=supplier)
+        registry = MagicMock()
+        registry.async_get_entity_id.side_effect = lambda platform, domain, unique_id: (
+            entities.get(unique_id)
+        )
+        recorder = MagicMock()
+        recorder.async_add_executor_job = AsyncMock(side_effect=_run_executor)
+        with (
+            patch(
+                "custom_components.ssd_ims.coordinator.er.async_get",
+                return_value=registry,
+            ),
+            patch(
+                "custom_components.ssd_ims.coordinator.get_instance",
+                return_value=recorder,
+            ),
+            patch(
+                "custom_components.ssd_ims.coordinator.statistics_during_period",
+                return_value=means,
+            ) as mock_stats,
+        ):
+            result = await coordinator._pod_price_histories(POD_ID)
+        return result, mock_stats
+
+    async def test_two_rate_histories(self):
+        """VT and NT each follow their own sensor's hourly mean."""
+        (vt, nt), mock_stats = await self._histories(
+            {
+                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.vt",
+                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.nt",
+            },
+            {
+                "sensor.vt": [
+                    {"start": H0.timestamp(), "mean": 0.3},
+                    {"start": (H0 + timedelta(hours=1)).timestamp(), "mean": 0.25},
+                ],
+                "sensor.nt": [{"start": H0, "mean": 0.14}],
+            },
+        )
+        assert vt.at(H0) == 0.3
+        assert vt.at(H0 + timedelta(hours=2)) == 0.25
+        assert nt.at(H0 + timedelta(hours=2)) == 0.14
+        assert mock_stats.call_args.args[3] == {"sensor.vt", "sensor.nt"}
+        assert mock_stats.call_args.args[6] == {"mean"}
+
+    async def test_single_rate_history_is_the_vt_price(self):
+        """JT is read as VT; NT stays empty for single-rate points."""
+        (vt, nt), _ = await self._histories(
+            {f"ELECTRICITY_{POD_ID}_price_jt": "sensor.jt"},
+            {"sensor.jt": [{"start": H0, "mean": 0.2}]},
+            supplier=(0.21, None),
+        )
+        assert vt.at(H0) == 0.2
+        assert vt.current == 0.21
+        assert nt is None
+
+    async def test_without_recorded_history_the_current_price_applies(self):
+        """A just-installed supplier integration has no statistics yet."""
+        (vt, nt), _ = await self._histories(
+            {
+                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.vt",
+                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.nt",
+            },
+            {},
+        )
+        assert vt == PriceHistory(0.25)
+        assert nt == PriceHistory(0.14)
+
+    async def test_options_prices_have_no_history(self):
+        """Without supplier sensors the statistics aren't queried at all."""
+        coordinator = _make_coordinator(
+            MagicMock(), {CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.1}
+        )
+        with patch(
+            "custom_components.ssd_ims.coordinator.statistics_during_period"
+        ) as mock_stats:
+            vt, nt = await coordinator._pod_price_histories(POD_ID)
+        assert (vt, nt) == (PriceHistory(0.3), PriceHistory(0.1))
+        mock_stats.assert_not_called()
+
+
+class TestHourlyCostsWithPriceHistory:
+    """Each hour is costed with the price valid at that hour."""
+
+    async def test_price_change_applies_only_from_its_hour(self):
+        """Hours before the change keep the old price, even when recomputed."""
+        coordinator = _make_coordinator(MagicMock(), {})
+        # One register period covering everything, all VT
+        periods = [(H0 - timedelta(days=1), H0 + timedelta(days=1), 1.0)]
+        energy_rows = [
+            {"start": H0 + timedelta(hours=h), "sum": float(h + 1)} for h in range(4)
+        ]
+
+        def fake_stats(hass, start, end, ids, period, units, types):
+            return {"ssd_ims:home_actual_consumption": energy_rows}
+
+        recorder = MagicMock()
+        recorder.async_add_executor_job = AsyncMock(side_effect=_run_executor)
+        with (
+            patch(
+                "custom_components.ssd_ims.coordinator.get_instance",
+                return_value=recorder,
+            ),
+            patch(
+                "custom_components.ssd_ims.coordinator.get_last_statistics",
+                return_value={},
+            ),
+            patch(
+                "custom_components.ssd_ims.coordinator.statistics_during_period",
+                side_effect=fake_stats,
+            ),
+            patch(
+                "custom_components.ssd_ims.coordinator.async_add_external_statistics"
+            ) as mock_add_stats,
+        ):
+            await coordinator._import_hourly_costs(
+                "ssd_ims:home_actual_consumption",
+                "ssd_ims:home_actual_consumption_cost",
+                "Home Actual Consumption Cost",
+                periods,
+                PriceHistory(0.5, [(H0, 0.1), (H0 + timedelta(hours=2), 0.5)]),
+                PriceHistory(0.05),
+            )
+
+        sums = [row["sum"] for row in mock_add_stats.call_args.args[2]]
+        # 1 kWh per hour: 0.1, 0.1, then 0.5, 0.5
+        assert sums == pytest.approx([0.1, 0.2, 0.7, 1.2])
+
+    async def test_register_costs_use_the_price_at_each_month(self):
+        """Monthly costs: each bucket priced with the price valid then."""
+        client = MagicMock()
+        client.get_registry_data = AsyncMock(return_value=READINGS)
+        coordinator = _make_coordinator(client, {})
+        october = datetime(2026, 10, 15, tzinfo=UTC)
+        coordinator._pod_price_histories = AsyncMock(
+            return_value=(
+                PriceHistory(0.5, [(SEP, 0.25), (october, 0.5)]),
+                PriceHistory(0.1),
+            )
+        )
+
+        _, mock_add_stats = await _run_registry_update(coordinator)
+
+        cost_vt = _imported(mock_add_stats)[f"ssd_ims:{POD_ID.lower()}_cost_vt"]
+        # September bucket (10 kWh) at 0.25, October bucket (5 kWh) at 0.5
+        assert [s["sum"] for s in cost_vt] == [2.5, 5.0]

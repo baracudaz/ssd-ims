@@ -50,7 +50,7 @@ from .const import (
     STAT_ACTUAL_CONSUMPTION_COST,
     SUPPLIER_PRICE_DOMAIN,
 )
-from .helpers import calculate_yesterday_range, sanitize_name
+from .helpers import PriceHistory, calculate_yesterday_range, sanitize_name
 from .models import ChartData, PointOfDelivery, RegistryReading
 
 _LOGGER = logging.getLogger(__name__)
@@ -628,7 +628,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         # Read the prices only now: the options may have changed while the
         # registry request was in flight, and imported buckets are never
         # repriced later.
-        price_vt, price_nt = self._pod_prices(pod_id)
+        price_vt, price_nt = await self._pod_price_histories(pod_id)
         for attr, energy_key, cost_key, label, price in (
             (
                 "consumption_tariff1",
@@ -662,7 +662,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     f"{pod_name} Cost {label}",
                     CURRENCY,
                     None,
-                    [(b, d * price) for b, d in deltas],
+                    [(b, d * price.at(b)) for b, d in deltas],
                 )
 
     async def _async_reprice(self) -> None:
@@ -734,6 +734,74 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             SUPPLIER_PRICE_DOMAIN,
             f"ELECTRICITY_{pod_id}_price_{tariff}",
         )
+
+    async def _pod_price_histories(
+        self, pod_id: str
+    ) -> tuple[PriceHistory | None, PriceHistory | None]:
+        """Return the (VT, NT) price histories for a POD.
+
+        Supplier price sensors have state_class measurement, so Home
+        Assistant keeps their hourly mean in its long-term statistics. Each
+        hour is priced with that mean, so a price change applies from the
+        hour it happened and never retroactively. Prices from the options
+        have no history and apply to every hour, as before.
+        """
+        price_vt, price_nt = self._pod_prices(pod_id)
+        histories: dict[str, PriceHistory | None] = {
+            "vt": None if price_vt is None else PriceHistory(price_vt),
+            "nt": None if price_nt is None else PriceHistory(price_nt),
+        }
+        if price_vt is None or self._supplier_prices(pod_id) is None:
+            return histories["vt"], histories["nt"]
+
+        registry = er.async_get(self.hass)
+        entity_ids = {
+            tariff: entity_id
+            for tariff in ("vt", "nt", "jt")
+            if (entity_id := self._supplier_entity_id(registry, pod_id, tariff))
+        }
+        # A single-rate point's JT price is its VT price.
+        if "vt" not in entity_ids and "jt" in entity_ids:
+            entity_ids["vt"] = entity_ids.pop("jt")
+        entity_ids.pop("jt", None)
+        if not entity_ids:
+            return histories["vt"], histories["nt"]
+
+        def _means() -> dict[str, list[dict[str, Any]]]:
+            return statistics_during_period(
+                self.hass,
+                REGISTRY_HISTORY_START,
+                None,
+                set(entity_ids.values()),
+                "hour",
+                None,
+                {"mean"},
+            )
+
+        try:
+            means = await get_instance(self.hass).async_add_executor_job(_means)
+        except Exception as e:
+            _LOGGER.warning("Price history unavailable, using current prices: %s", e)
+            return histories["vt"], histories["nt"]
+
+        for tariff, entity_id in entity_ids.items():
+            current = histories[tariff]
+            if current is None:
+                continue
+            points = [
+                (self._as_datetime(row["start"]), float(row["mean"]))
+                for row in means.get(entity_id, [])
+                if row.get("mean") is not None
+            ]
+            histories[tariff] = PriceHistory(current.current, points)
+        return histories["vt"], histories["nt"]
+
+    @staticmethod
+    def _as_datetime(value: Any) -> datetime:
+        """Statistics rows carry timestamps or datetimes depending on the API."""
+        if isinstance(value, (int, float)):
+            return dt_util.utc_from_timestamp(value)
+        return value
 
     def _pod_prices(self, pod_id: str) -> tuple[float | None, float | None]:
         """Return the (VT, NT) price per kWh incl. VAT for a POD.
@@ -871,7 +939,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         await recorder.async_block_till_done()
 
         for pod_id in pod_ids:
-            price_vt, price_nt = self._pod_prices(pod_id)
+            price_vt, price_nt = await self._pod_price_histories(pod_id)
             if price_vt is None:
                 continue
             if price_nt is None:
@@ -892,8 +960,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     cost_id,
                     f"{pod_name} Actual Consumption Cost",
                     periods,
-                    float(price_vt),
-                    float(price_nt),
+                    price_vt,
+                    price_nt,
                 )
             except Exception as e:
                 _LOGGER.error("Error computing hourly costs for %s: %s", cost_id, e)
@@ -904,9 +972,10 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         cost_id: str,
         name: str,
         periods: list[tuple[datetime, datetime, float | None]],
-        price_vt: float,
-        price_nt: float,
+        price_vt: PriceHistory,
+        price_nt: PriceHistory,
     ) -> None:
+        """Import hourly costs, each hour priced with the prices valid then."""
         recorder = get_instance(self.hass)
 
         def _stats(statistic_id: str, start: datetime) -> list[dict[str, Any]]:
@@ -977,7 +1046,9 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             previous_sum = energy_sum
             if start < recompute_from:
                 continue
-            cost_sum += change * self._blended_price(periods, start, price_vt, price_nt)
+            cost_sum += change * self._blended_price(
+                periods, start, price_vt.at(start), price_nt.at(start)
+            )
             stats.append({"start": start, "sum": round(cost_sum, 6)})
 
         if not stats:
