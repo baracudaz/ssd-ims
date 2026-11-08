@@ -1,5 +1,5 @@
 """Tests for the SSD IMS config flow, using Home Assistant's own test
-harness (pytest_homeassistant_custom_component) so the flow runs through
+harness (pytest-homeassistant) so the flow runs through
 real hass.config_entries machinery instead of being hand-mocked."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +8,7 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.ssd_ims.const import (
     CONF_HISTORY_DAYS,
