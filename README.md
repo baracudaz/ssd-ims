@@ -45,6 +45,8 @@ Pre každé odberné miesto vznikne **8 entít**:
 | `sensor.<pod_name>_low_tariff_meter_reading` | Posledný mesačný stav registra NT, 1.8.2 (kWh) |
 | `sensor.<pod_name>_peak_demand` | Maximálny štvrťhodinový výkon za posledné obdobie, 1.6.0 (kW) |
 
+<img src="artifacts/screenshots/sensors.png" alt="Snímače odberného miesta" width="400">
+
 Entity registrov majú atribúty `reading_time` (čas odpočtu) a `meter_serial_number` (výrobné číslo elektromera).
 
 ## Dlhodobé štatistiky
@@ -134,6 +136,8 @@ Po nastavení môžete tieto položky zmeniť v **Nastavenia** → **Zariadenia 
 | Cena vo vysokej tarife (VT) | Nepovinné. Koncová cena za 1 kWh v EUR vrátane DPH a všetkých poplatkov — zapne hodinové náklady `actual_consumption_cost` a mesačné `cost_vt` |
 | Cena v nízkej tarife (NT) | Nepovinné. To isté pre NT — zapne mesačné `cost_nt`. Pri jednotarifnej sadzbe (D1, D2) nechajte prázdne, celá spotreba sa vypočíta s cenou VT |
 
+<img src="artifacts/screenshots/options.png" alt="Možnosti SSD IMS" width="450">
+
 ## Ceny a náklady
 
 **Kde nájdete ceny:** na faktúre od dodávateľa (napr. SSE ich uvádza pod nadpisom *Aktuálne koncové ceny elektriny platné pre Vašu sadzbu*). Použite tieto koncové ceny a nesčítavajte položky faktúry sami — koncová cena už obsahuje silovú elektrinu, distribúciu, straty, regulované poplatky za kWh (tarifa za prevádzkovanie systému TPS, tarifa za systémové služby TSS, odvod do Národného jadrového fondu NJF) aj DPH, ktoré sa pri ručnom sčítaní ľahko vynechajú. Mesačné poplatky (platba dodávateľovi, distribúcia podľa ističa) sa v paneli Energie zobraziť nedajú a nie sú zahrnuté.
@@ -153,6 +157,8 @@ Po nastavení môžete tieto položky zmeniť v **Nastavenia** → **Zariadenia 
 **Odporúčané — hodinová spotreba s nákladmi:** `ssd_ims:<pod_name>_actual_consumption` s nákladmi `ssd_ims:<pod_name>_actual_consumption_cost`. Fungujú denné, týždenné, mesačné aj ročné pohľady. Náklady každej hodiny sú jej kWh × priemerná cena obdobia registrov, vážená pomerom VT/NT v tomto období — mesačné náklady sú teda presné, rozdelenie na hodiny je priemer (portál nezverejňuje, kedy HDO prepínalo tarify). Hodiny po poslednom odpočte (aktuálny mesiac) sa ocenia pomerom predchádzajúceho obdobia a po zverejnení odpočtu sa automaticky opravia. Náklady existujú len pre hodiny, ktorých spotreba bola importovaná (pozri *Počet dní*).
 
 **Alternatíva — mesačné rozdelenie VT/NT:** `ssd_ims:<pod_name>_consumption_vt` s nákladmi `ssd_ims:<pod_name>_cost_vt` a `ssd_ims:<pod_name>_consumption_nt` s nákladmi `ssd_ims:<pod_name>_cost_nt`. Ukazuje skutočné rozdelenie VT/NT po mesiacoch, ale denné a týždenné pohľady zostanú prázdne, lebo registre sa odčítavajú len raz mesačne.
+
+![Mesačný prehľad spotreby a nákladov v paneli Energie](artifacts/screenshots/energy-month.png)
 
 **Použite len jednu z možností, nie obe** — merajú tú istú energiu, takže by sa započítala dvakrát. Štatistiky VT/NT si môžete zobraziť mimo panela Energie, napr. v karte **Štatistický graf** s mesačným obdobím.
 
