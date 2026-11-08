@@ -10,6 +10,7 @@
 - **New feature**: Three new sensors per POD: `High Tariff Meter Reading`, `Low Tariff Meter Reading` (kWh, latest register counters) and `Peak Demand` (kW), with `reading_time` and `meter_serial_number` attributes
 - **Internal**: Diagnostics include the latest register reading (meter serial number redacted)
 - **Docs**: README sections on tariff registers, the new options, and choosing between the hourly total and the VT/NT split in the Energy dashboard
+- **Metadata**: `baracudaz` is now the sole code owner in `manifest.json`, so the Marketplace shows this repository's maintainer; the original project by samsk is credited in the README
 - **Maintenance**: Bumped the pinned Home Assistant dev/test dependency from 2026.8.2 to 2026.11.0, with `pydantic` 2.13.5 to match. The test harness moved from the community `pytest-homeassistant-custom-component` (no longer maintained, no 2026.11 release) to `pytest-homeassistant`, which Home Assistant core now publishes alongside each release; the tests import `pytest_homeassistant.common` instead, and `pytest.ini` disables the `respx` plugin as the new package requires
 
 ## Version 2.2.8

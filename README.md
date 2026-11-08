@@ -237,6 +237,10 @@ The integration uses the SSD IMS portal API:
 | `/api/consumption-production/profile-data/get-points-of-delivery` | POD discovery |
 | `/api/consumption-production/profile-data/chart-data` | Energy data retrieval |
 
+## Credits
+
+Maintained by [baracudaz](https://github.com/baracudaz). Originally based on [HA-SSD-IMS](https://github.com/samsk/HA-SSD-IMS) by [samsk](https://github.com/samsk).
+
 ## License
 
 This project is licensed under the AGPLv3 License - see the LICENSE file for details.

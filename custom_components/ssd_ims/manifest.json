@@ -1,7 +1,7 @@
 {
   "domain": "ssd_ims",
   "name": "Stredoslovenská distribučná (SSD IMS)",
-  "codeowners": ["@samsk", "@baracudaz"],
+  "codeowners": ["@baracudaz"],
   "config_flow": true,
   "dependencies": ["recorder"],
   "documentation": "https://github.com/baracudaz/ssd-ims",
