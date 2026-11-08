@@ -284,6 +284,7 @@ async def test_options_flow_updates_scan_interval(hass: HomeAssistant):
 
     coordinator = MagicMock()
     coordinator.update_config = AsyncMock()
+    coordinator.async_request_refresh = AsyncMock()
     entry.runtime_data = coordinator
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
@@ -317,6 +318,7 @@ async def test_options_flow_saves_tariff_prices(hass: HomeAssistant):
 
     coordinator = MagicMock()
     coordinator.update_config = AsyncMock()
+    coordinator.async_request_refresh = AsyncMock()
     entry.runtime_data = coordinator
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
@@ -333,6 +335,8 @@ async def test_options_flow_saves_tariff_prices(hass: HomeAssistant):
     pushed = coordinator.update_config.call_args.args[0]
     assert pushed["price_vt"] == 0.2502
     assert pushed["price_nt"] == 0.1376
+    # Costs are computed right away, not at the next scheduled poll.
+    coordinator.async_request_refresh.assert_awaited_once()
 
 
 async def test_options_flow_prices_are_optional(hass: HomeAssistant):
@@ -350,6 +354,7 @@ async def test_options_flow_prices_are_optional(hass: HomeAssistant):
     entry.add_to_hass(hass)
     coordinator = MagicMock()
     coordinator.update_config = AsyncMock()
+    coordinator.async_request_refresh = AsyncMock()
     entry.runtime_data = coordinator
 
     result = await hass.config_entries.options.async_init(entry.entry_id)

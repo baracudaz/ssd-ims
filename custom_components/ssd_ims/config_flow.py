@@ -410,6 +410,9 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
             # Update coordinator configuration
             coordinator = self.config_entry.runtime_data
             await coordinator.update_config({**self.config_entry.data, **user_input})
+            # Apply new prices/settings now rather than at the next scheduled
+            # poll, which can be up to a day away.
+            await coordinator.async_request_refresh()
             return self.async_create_entry(title="", data=user_input)
 
         price_selector = NumberSelector(
