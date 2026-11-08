@@ -28,15 +28,22 @@ from .const import (
     CONF_HISTORY_DAYS,
     CONF_POD_NAME_MAPPING,
     CONF_POINT_OF_DELIVERY,
+    CONF_PRICE_NT,
+    CONF_PRICE_VT,
     CONF_SCAN_INTERVAL,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    REGISTER_STAT_CONSUMPTION_NT,
+    REGISTER_STAT_CONSUMPTION_VT,
+    REGISTER_STAT_COST_NT,
+    REGISTER_STAT_COST_VT,
+    REGISTRY_LOOKBACK,
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
 )
 from .helpers import calculate_yesterday_range, sanitize_name
-from .models import ChartData, PointOfDelivery
+from .models import ChartData, PointOfDelivery, RegistryReading
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,6 +71,11 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         self.pods: dict[str, PointOfDelivery] = {}
         self._last_successful_data_date: date | None = None
         self._stats_lock = asyncio.Lock()
+        # Register readings change at most a few times a month, so they're
+        # fetched at most once per calendar day, independently of the
+        # profile-data smart-polling gate.
+        self._registry_lock = asyncio.Lock()
+        self._last_registry_fetch_date: date | None = None
 
         scan_interval = timedelta(
             minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -92,6 +104,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         # update — ensures newly added/removed PODs are picked up immediately
         # even when the config changes on the same calendar day.
         self._last_successful_data_date = None
+        # Prices may have changed — re-run the register import on next poll.
+        self._last_registry_fetch_date = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API and update statistics."""
@@ -160,6 +174,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                         "last_update": now.isoformat(),
                     }
                 )
+
+            await self._update_registry(pod_ids, all_pod_data, today)
 
             if stats_complete:
                 self._last_successful_data_date = today
@@ -431,6 +447,190 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     pod_data["cumulative_totals"][sensor_type] = cumulative_total
                 else:
                     pod_data["cumulative_totals"][sensor_type] = 0.0
+
+    @staticmethod
+    def _registry_bucket(reading_time: datetime) -> datetime:
+        """Return the statistics hour a register delta ending at reading_time
+        belongs to.
+
+        A reading stamped exactly on the hour (the usual 00:00 local reading
+        on the 1st) closes the *previous* hour — so the month's consumption
+        lands in that month, not the next one. An ad-hoc reading at e.g.
+        18:21 belongs to the 18:00 hour.
+        """
+        reading_utc = reading_time.astimezone(UTC)
+        floored = reading_utc.replace(minute=0, second=0, microsecond=0)
+        if floored == reading_utc:
+            return floored - timedelta(hours=1)
+        return floored
+
+    @classmethod
+    def _registry_deltas(
+        cls, readings: list[RegistryReading], attr: str
+    ) -> list[tuple[datetime, float]]:
+        """Turn cumulative register readings into (hour, delta) pairs.
+
+        No delta is produced across a meter replacement (serial number
+        change) or a counter that went backwards, since the difference
+        between two unrelated counters is meaningless. Deltas falling into
+        the same hour are merged.
+        """
+        merged: dict[datetime, float] = {}
+        previous: tuple[str, float] | None = None
+        for reading in sorted(readings, key=lambda r: r.reading_time):
+            value = getattr(reading, attr)
+            if value is None:
+                continue
+            if previous is not None:
+                prev_serial, prev_value = previous
+                if reading.serial_number != prev_serial or value < prev_value:
+                    _LOGGER.info(
+                        "Register %s reset at %s (meter %s -> %s); "
+                        "skipping delta across the change",
+                        attr,
+                        reading.reading_time,
+                        prev_serial,
+                        reading.serial_number,
+                    )
+                else:
+                    bucket = cls._registry_bucket(reading.reading_time)
+                    merged[bucket] = merged.get(bucket, 0.0) + (value - prev_value)
+            previous = (reading.serial_number, value)
+        return sorted(merged.items())
+
+    async def _import_register_series(
+        self,
+        statistic_id: str,
+        name: str,
+        unit: str,
+        unit_class: str | None,
+        deltas: list[tuple[datetime, float]],
+    ) -> None:
+        """Append register deltas newer than the last imported statistic."""
+        last_stats_result = await get_instance(self.hass).async_add_executor_job(
+            get_last_statistics, self.hass, 1, statistic_id, True, {"start", "sum"}
+        )
+        cumulative_sum = 0.0
+        last_start: datetime | None = None
+        if last_stats_result and statistic_id in last_stats_result:
+            last_stat = last_stats_result[statistic_id][0]
+            cumulative_sum = last_stat.get("sum") or 0.0
+            if (start_val := last_stat.get("start")) is not None:
+                if isinstance(start_val, (int, float)):
+                    start_val = dt_util.utc_from_timestamp(start_val)
+                last_start = start_val
+
+        stats = []
+        for bucket, delta in deltas:
+            if last_start is not None and bucket <= last_start:
+                continue
+            cumulative_sum += delta
+            stats.append({"start": bucket, "sum": round(cumulative_sum, 6)})
+
+        if not stats:
+            return
+
+        metadata = {
+            "has_sum": True,
+            "mean_type": StatisticMeanType.NONE,
+            "name": name,
+            "source": DOMAIN,
+            "statistic_id": statistic_id,
+            "unit_of_measurement": unit,
+            "unit_class": unit_class,
+        }
+        async_add_external_statistics(self.hass, metadata, stats)
+        _LOGGER.debug(
+            "Imported %d register statistics for %s", len(stats), statistic_id
+        )
+
+    async def _update_registry(
+        self, pod_ids: list[str], all_pod_data: dict[str, Any], today: date
+    ) -> None:
+        """Fetch tariff register readings and import VT/NT energy + cost stats.
+
+        Runs at most once per calendar day. On days it doesn't run (or a POD
+        fails), the previously fetched latest reading is carried over so the
+        register sensors keep their value.
+        """
+        previous_data = self.data or {}
+        for pod_id in pod_ids:
+            if previous := previous_data.get(pod_id, {}).get("registry"):
+                all_pod_data.setdefault(pod_id, {})["registry"] = previous
+
+        if self._last_registry_fetch_date == today:
+            return
+
+        async with self._registry_lock:
+            now = dt_util.now()
+            price_vt = self.config.get(CONF_PRICE_VT)
+            price_nt = self.config.get(CONF_PRICE_NT)
+            currency = self.hass.config.currency
+            all_ok = True
+
+            for pod_id in pod_ids:
+                if pod_id not in self.pods:
+                    continue
+                pod_name = self.config.get(CONF_POD_NAME_MAPPING, {}).get(
+                    pod_id, pod_id
+                )
+                try:
+                    readings = await self.api_client.get_registry_data(
+                        pod_id, now - REGISTRY_LOOKBACK, now + timedelta(days=1)
+                    )
+                    if not readings:
+                        continue
+
+                    for attr, energy_key, cost_key, label, price in (
+                        (
+                            "consumption_tariff1",
+                            REGISTER_STAT_CONSUMPTION_VT,
+                            REGISTER_STAT_COST_VT,
+                            "VT",
+                            price_vt,
+                        ),
+                        (
+                            "consumption_tariff2",
+                            REGISTER_STAT_CONSUMPTION_NT,
+                            REGISTER_STAT_COST_NT,
+                            "NT",
+                            price_nt,
+                        ),
+                    ):
+                        deltas = self._registry_deltas(readings, attr)
+                        await self._import_register_series(
+                            self._build_statistic_id(pod_name, energy_key),
+                            f"{pod_name} Consumption {label}",
+                            "kWh",
+                            "energy",
+                            deltas,
+                        )
+                        if price is not None:
+                            await self._import_register_series(
+                                self._build_statistic_id(pod_name, cost_key),
+                                f"{pod_name} Cost {label}",
+                                currency,
+                                None,
+                                [(b, d * float(price)) for b, d in deltas],
+                            )
+
+                    latest = readings[-1]
+                    all_pod_data.setdefault(pod_id, {})["registry"] = {
+                        "reading_time": latest.reading_time.isoformat(),
+                        "serial_number": latest.serial_number,
+                        "consumption_vt": latest.consumption_tariff1,
+                        "consumption_nt": latest.consumption_tariff2,
+                        "consumption_total": latest.consumption_total,
+                        "max_demand": latest.max_demand,
+                    }
+                except Exception as e:
+                    all_ok = False
+                    _LOGGER.error(
+                        "Error fetching register readings for POD %s: %s", pod_id, e
+                    )
+
+            if all_ok:
+                self._last_registry_fetch_date = today
 
     async def _discover_pods(self) -> None:
         """Discover points of delivery."""

@@ -8,6 +8,7 @@ A custom HA integration for gathering energy consumption and supply data from th
 
 - **Energy Statistics Import**: Automatically imports historical and daily energy data into Home Assistant's statistics database
 - **Energy Dashboard Ready**: Data is formatted for direct use in Home Assistant's Energy dashboard
+- **Tariff Register Readings (VT/NT)**: Imports the meter's monthly high/low tariff register readings and peak demand, with optional cost statistics computed from your tariff prices
 - **Multiple POD Support**: Monitor multiple Points of Delivery simultaneously
 - **Custom POD Names**: Set friendly names for your Points of Delivery (e.g., home address, apartment name)
 - **Historical Data Import**: Import past energy data during initial setup (configurable, up to 365 days)
@@ -27,9 +28,11 @@ A custom HA integration for gathering energy consumption and supply data from th
 
 **Data Resolution**: All metering data has 15-minute resolution from the source, aggregated to hourly statistics for Home Assistant.
 
+**Tariff Registers**: The meter's tariff registers (1.8.1 = VT/high tariff, 1.8.2 = NT/low tariff, 1.6.0 = peak demand) come from the portal's *Registrové údaje* page. They are cumulative counters read **once a month** (00:00 on the 1st, plus occasional ad-hoc readings), so the VT/NT split is only available per month — the 15-minute profile has no tariff split, and the portal doesn't publish HDO switching times.
+
 ## Sensors Created
 
-The integration creates **5 sensors per Point of Delivery**:
+The integration creates **8 sensors per Point of Delivery**:
 
 | Sensor | Description |
 |--------|-------------|
@@ -38,6 +41,11 @@ The integration creates **5 sensors per Point of Delivery**:
 | `sensor.<pod_name>_actual_consumption_total` | Cumulative total consumption from statistics (kWh) |
 | `sensor.<pod_name>_actual_supply_total` | Cumulative total supply from statistics (kWh) |
 | `sensor.<pod_name>_last_update` | Timestamp of last data update |
+| `sensor.<pod_name>_high_tariff_meter_reading` | Latest monthly VT register reading, 1.8.1 (kWh, cumulative counter) |
+| `sensor.<pod_name>_low_tariff_meter_reading` | Latest monthly NT register reading, 1.8.2 (kWh, cumulative counter) |
+| `sensor.<pod_name>_peak_demand` | Peak quarter-hour demand of the latest reading period, 1.6.0 (kW) |
+
+The register sensors have `reading_time` and `meter_serial_number` attributes.
 
 ## Long-Term Statistics
 
@@ -47,6 +55,12 @@ The integration imports energy data into Home Assistant's statistics database wi
 |--------------|-------------|
 | `ssd_ims:<pod_name>_actual_consumption` | Cumulative energy consumption (kWh) |
 | `ssd_ims:<pod_name>_actual_supply` | Cumulative energy supply/production (kWh) |
+| `ssd_ims:<pod_name>_consumption_vt` | High tariff (VT) consumption, monthly (kWh) |
+| `ssd_ims:<pod_name>_consumption_nt` | Low tariff (NT) consumption, monthly (kWh) |
+| `ssd_ims:<pod_name>_cost_vt` | High tariff cost, monthly (your currency) — only when a VT price is set |
+| `ssd_ims:<pod_name>_cost_nt` | Low tariff cost, monthly (your currency) — only when an NT price is set |
+
+The VT/NT statistics are the differences between consecutive register readings. Each month's value is placed in the last hour of that month (a reading at 00:00 on 1 December closes November), so the Energy dashboard's month and year views show the correct split, while day/hour views show it as a single block at the end of the month. On first setup roughly the last 13 months are imported; the first available reading only serves as the baseline. No difference is computed across a meter replacement.
 
 `<pod_name>` is derived from the friendly name you assign the POD during setup. **Renaming a POD later (via Reconfigure) changes its statistic ID and starts a new series** — the previous history isn't carried over. Pick a name you're happy to keep, or expect to reconfigure the Energy dashboard source if you rename it.
 
@@ -92,7 +106,15 @@ These statistics can be used directly in the Energy dashboard configuration.
 
 ### Options Flow
 
-After setup, you can change the update interval via **Settings** → **Devices & Services** → **Stredoslovenská distribučná (SSD IMS)** → **Configure**.
+After setup, you can change these via **Settings** → **Devices & Services** → **Stredoslovenská distribučná (SSD IMS)** → **Configure**:
+
+| Option | Description |
+|--------|-------------|
+| Update Interval | How often to check for new data |
+| High tariff (VT) price | Optional. Final price per kWh incl. VAT and all per-kWh fees — enables the `cost_vt` statistic |
+| Low tariff (NT) price | Optional. Same for NT — enables the `cost_nt` statistic |
+
+Your supplier invoice usually lists these final prices (e.g. SSE prints them as *Aktuálne koncové ceny elektriny platné pre Vašu sadzbu*). Fixed monthly fees (supplier fee, distribution fee by breaker size) can't be represented in the Energy dashboard and are not included. A price change applies to months imported afterwards; already imported months are not recalculated, and the first import computes all past months at the current price.
 
 ## Energy Dashboard Setup
 
@@ -103,6 +125,16 @@ To add SSD IMS data to your Energy dashboard:
 3. Select "Use an external statistic"
 4. Search for `ssd_ims:<pod_name>_actual_consumption`, using the friendly name you assigned the POD during setup
 5. (Optional) Add supply data similarly for solar production tracking
+
+### Alternative: tariff split with costs (VT/NT)
+
+Home Assistant only applies a price configured in the Energy dashboard to statistics backed by an entity — not to imported (external) statistics like these. To see costs, set the VT/NT prices in the integration's options and use the imported cost statistics:
+
+1. Click **Add Consumption** and select `ssd_ims:<pod_name>_consumption_vt`
+2. Under cost, choose **Use an entity tracking the total costs** and select `ssd_ims:<pod_name>_cost_vt`
+3. Repeat with `ssd_ims:<pod_name>_consumption_nt` / `ssd_ims:<pod_name>_cost_nt`
+
+**Use either `actual_consumption` or the VT + NT pair, not both** — they measure the same energy, so adding both double-counts it. `actual_consumption` gives an hourly timeline; VT/NT gives a correct monthly tariff split and cost.
 
 ## Development
 

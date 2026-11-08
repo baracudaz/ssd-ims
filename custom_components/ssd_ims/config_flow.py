@@ -13,6 +13,11 @@ from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
 
 from .api_client import SsdImsApiClient
 from .const import (
@@ -20,6 +25,8 @@ from .const import (
     CONF_HISTORY_DAYS,
     CONF_POD_NAME_MAPPING,
     CONF_POINT_OF_DELIVERY,
+    CONF_PRICE_NT,
+    CONF_PRICE_VT,
     CONF_SCAN_INTERVAL,
     DEFAULT_ENABLE_HISTORY_IMPORT,
     DEFAULT_HISTORY_DAYS,
@@ -372,19 +379,41 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
             await coordinator.update_config({**self.config_entry.data, **user_input})
             return self.async_create_entry(title="", data=user_input)
 
+        currency = self.hass.config.currency
+        price_selector = NumberSelector(
+            NumberSelectorConfig(
+                min=0,
+                max=100,
+                step="any",
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement=f"{currency}/kWh",
+            )
+        )
+        options = self.config_entry.options
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
-                        default=self.config_entry.options.get(
+                        default=options.get(
                             CONF_SCAN_INTERVAL,
                             self.config_entry.data.get(
                                 CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
                             ),
                         ),
                     ): vol.In(SCAN_INTERVAL_OPTIONS),
+                    # suggested_value (not default) so the field can be
+                    # cleared again to stop importing costs.
+                    vol.Optional(
+                        CONF_PRICE_VT,
+                        description={"suggested_value": options.get(CONF_PRICE_VT)},
+                    ): price_selector,
+                    vol.Optional(
+                        CONF_PRICE_NT,
+                        description={"suggested_value": options.get(CONF_PRICE_NT)},
+                    ): price_selector,
                 }
             ),
             errors=errors,

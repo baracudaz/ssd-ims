@@ -15,6 +15,10 @@ CONF_POINT_OF_DELIVERY: Final = (
 CONF_POD_NAME_MAPPING: Final = "pod_name_mapping"
 CONF_ENABLE_HISTORY_IMPORT: Final = "enable_history_import"
 CONF_HISTORY_DAYS: Final = "history_days"
+# Optional per-kWh prices (incl. VAT, in the HA instance's currency) used to
+# compute cost statistics for the monthly tariff register readings.
+CONF_PRICE_VT: Final = "price_vt"
+CONF_PRICE_NT: Final = "price_nt"
 
 # Defaults
 DEFAULT_SCAN_INTERVAL: Final = 360  # 6 hours - sensible for daily data
@@ -47,6 +51,19 @@ API_PODS: Final = (
     f"{API_BASE_URL}/consumption-production/profile-data/get-points-of-delivery"
 )
 API_CHART: Final = f"{API_BASE_URL}/consumption-production/profile-data/chart-data"
+API_REGISTRY: Final = f"{API_BASE_URL}/consumption-production/registry-data"
+
+# Tariff register readings (Registrové údaje) are published roughly once a
+# month (00:00 local on the 1st, plus occasional ad-hoc readings). Each
+# refresh re-reads this window and imports whatever is newer than the last
+# imported statistic, which keeps the import idempotent.
+REGISTRY_LOOKBACK: Final = timedelta(days=400)
+
+# Register-based statistic suffixes (appended to the sanitized POD name)
+REGISTER_STAT_CONSUMPTION_VT: Final = "consumption_vt"
+REGISTER_STAT_CONSUMPTION_NT: Final = "consumption_nt"
+REGISTER_STAT_COST_VT: Final = "cost_vt"
+REGISTER_STAT_COST_NT: Final = "cost_nt"
 
 # Sensor types
 SENSOR_TYPE_ACTUAL_CONSUMPTION: Final = "actual_consumption"

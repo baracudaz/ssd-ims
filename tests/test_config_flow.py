@@ -295,3 +295,63 @@ async def test_options_flow_updates_scan_interval(hass: HomeAssistant):
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     coordinator.update_config.assert_called_once()
+
+
+async def test_options_flow_saves_tariff_prices(hass: HomeAssistant):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="test_user",
+        data={
+            "username": "test_user",
+            "password": "test_pass",
+            CONF_POINT_OF_DELIVERY: [POD_ID],
+            CONF_POD_NAME_MAPPING: {},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = MagicMock()
+    coordinator.update_config = AsyncMock()
+    entry.runtime_data = coordinator
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert set(result["data_schema"].schema) >= {"price_vt", "price_nt"}
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"scan_interval": 360, "price_vt": 0.2502, "price_nt": 0.1376},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["price_vt"] == 0.2502
+    assert entry.options["price_nt"] == 0.1376
+    pushed = coordinator.update_config.call_args.args[0]
+    assert pushed["price_vt"] == 0.2502
+    assert pushed["price_nt"] == 0.1376
+
+
+async def test_options_flow_prices_are_optional(hass: HomeAssistant):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="test_user",
+        data={
+            "username": "test_user",
+            "password": "test_pass",
+            CONF_POINT_OF_DELIVERY: [POD_ID],
+            CONF_POD_NAME_MAPPING: {},
+        },
+        options={"price_vt": 0.3, "price_nt": 0.2},
+    )
+    entry.add_to_hass(hass)
+    coordinator = MagicMock()
+    coordinator.update_config = AsyncMock()
+    entry.runtime_data = coordinator
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 360}
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "price_vt" not in entry.options
+    assert "price_nt" not in entry.options

@@ -1,5 +1,13 @@
 # Changelog
 
+## Version 2.3.0
+
+- **New feature**: Tariff register readings (VT/NT) and costs (#30). The integration now reads the meter's register data from the portal's *Registrové údaje* page — cumulative VT (1.8.1) and NT (1.8.2) counters plus peak demand (1.6.0), read once a month — and imports the monthly differences as `ssd_ims:<pod_name>_consumption_vt` / `_consumption_nt` external statistics, placed in the last hour of each month so the Energy dashboard's month/year views show the correct tariff split. Ad-hoc mid-month readings are handled, and no difference is computed across a meter replacement. Readings are fetched at most once per day
+- **New feature**: Optional VT/NT prices (per kWh incl. VAT) in the integration options. When set, `ssd_ims:<pod_name>_cost_vt` / `_cost_nt` cost statistics are imported alongside, for use as "entity tracking the total costs" in the Energy dashboard — Home Assistant doesn't apply its own price setting to external statistics. Fixed monthly fees are not included
+- **New feature**: Three new sensors per POD: `High Tariff Meter Reading`, `Low Tariff Meter Reading` (kWh, latest register counters) and `Peak Demand` (kW), with `reading_time` and `meter_serial_number` attributes
+- **Internal**: Diagnostics include the latest register reading (meter serial number redacted)
+- **Docs**: README sections on tariff registers, the new options, and choosing between the hourly total and the VT/NT split in the Energy dashboard
+
 ## Version 2.2.8
 
 - **Bug fix**: The hourly `Actual Consumption`/`Actual Supply` statistics were missing the last quarter-hour (23:45–24:00) of every day, so the 23:00 hour was about 25 % low and every day's total in the Energy dashboard was short by that quarter-hour (fixes #28). The portal stamps each 15-minute reading by its *end* time, so the day's last reading is stamped 00:00 of the next day, but the statistics import requested each day only up to 23:59:59 and that reading was never returned. Each day is now requested up to the next midnight (like the `Yesterday` sensors, which were already correct), and only readings that *start* within the day are counted, so a reading on the boundary can never be counted in two days. A reading on the boundary also no longer counts as yesterday's data being published, so yesterday stays pending until readings from within it actually arrive. Statistics already imported before this version are not corrected retroactively: the import resumes from the last stored hour, so earlier days keep their missing quarter-hours
