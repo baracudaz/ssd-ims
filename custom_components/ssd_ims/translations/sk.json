@@ -70,7 +70,7 @@
         },
         "data_description": {
           "price_vt": "Koncová cena v EUR za kWh vrátane DPH a všetkých poplatkov za kWh, napr. z faktúry dodávateľa.",
-          "price_nt": "Koncová cena v EUR za kWh vrátane DPH a všetkých poplatkov za kWh, napr. z faktúry dodávateľa."
+          "price_nt": "Koncová cena v EUR za kWh vrátane DPH a všetkých poplatkov za kWh, napr. z faktúry dodávateľa. Pri jednotarifných sadzbách (D1/D2) nechajte prázdne — pre celú spotrebu sa použije cena VT."
         }
       }
     }

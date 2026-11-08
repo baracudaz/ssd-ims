@@ -462,3 +462,35 @@ class TestHourlyCostStartupGuard:
         ) as mock_get_instance:
             await coordinator._update_hourly_costs([POD_ID])
         mock_get_instance.assert_not_called()
+
+
+class TestHourlyCostSinglePrice:
+    async def _run(self, config):
+        from homeassistant.core import CoreState
+
+        coordinator = _make_coordinator(MagicMock(), config, data={})
+        coordinator.hass.state = CoreState.running
+        coordinator._registry_readings = {POD_ID: READINGS}
+        coordinator._import_hourly_costs = AsyncMock()
+        recorder = MagicMock()
+        recorder.async_block_till_done = AsyncMock()
+        with patch(
+            "custom_components.ssd_ims.coordinator.get_instance",
+            return_value=recorder,
+        ):
+            await coordinator._update_hourly_costs([POD_ID])
+        return coordinator._import_hourly_costs
+
+    async def test_vt_price_alone_prices_all_consumption(self):
+        """Single-rate tariffs (D1/D2) only have one price."""
+        import_costs = await self._run({CONF_PRICE_VT: 0.3})
+        import_costs.assert_awaited_once()
+        assert import_costs.await_args.args[-2:] == (0.3, 0.3)
+
+    async def test_both_prices_are_used_as_given(self):
+        import_costs = await self._run({CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.1})
+        assert import_costs.await_args.args[-2:] == (0.3, 0.1)
+
+    async def test_nt_price_alone_imports_no_hourly_cost(self):
+        import_costs = await self._run({CONF_PRICE_NT: 0.1})
+        import_costs.assert_not_awaited()

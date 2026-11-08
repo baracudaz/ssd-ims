@@ -70,7 +70,7 @@
         },
         "data_description": {
           "price_vt": "Final price in EUR per kWh including VAT and all per-kWh fees, e.g. from your supplier invoice.",
-          "price_nt": "Final price in EUR per kWh including VAT and all per-kWh fees, e.g. from your supplier invoice."
+          "price_nt": "Final price in EUR per kWh including VAT and all per-kWh fees, e.g. from your supplier invoice. Leave empty for single-rate tariffs (D1/D2) — the VT price is then used for all consumption."
         }
       }
     }

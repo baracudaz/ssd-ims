@@ -59,7 +59,7 @@ The integration imports energy data into Home Assistant's statistics database wi
 | `ssd_ims:<pod_name>_consumption_nt` | Low tariff (NT) consumption, monthly (kWh) |
 | `ssd_ims:<pod_name>_cost_vt` | High tariff cost, monthly (EUR) — only when a VT price is set |
 | `ssd_ims:<pod_name>_cost_nt` | Low tariff cost, monthly (EUR) — only when an NT price is set |
-| `ssd_ims:<pod_name>_actual_consumption_cost` | Hourly cost of `actual_consumption` (EUR) — only when both prices are set |
+| `ssd_ims:<pod_name>_actual_consumption_cost` | Hourly cost of `actual_consumption` (EUR) — only when a VT price is set (NT defaults to the VT price) |
 
 The VT/NT statistics are the differences between consecutive register readings. Each month's value is placed in the last hour of that month (a reading at 00:00 on 1 December closes November), so the Energy dashboard's month and year views show the correct split, while day/hour views show it as a single block at the end of the month. On first setup the full register history available on the portal is imported (back to the meter's installation); the first reading only serves as the baseline. No difference is computed across a meter replacement.
 
@@ -113,7 +113,7 @@ After setup, you can change these via **Settings** → **Devices & Services** �
 |--------|-------------|
 | Update Interval | How often to check for new data |
 | High tariff (VT) price | Optional. Final price in EUR per kWh incl. VAT and all per-kWh fees — enables the `cost_vt` statistic |
-| Low tariff (NT) price | Optional. Same for NT — enables the `cost_nt` statistic |
+| Low tariff (NT) price | Optional. Same for NT — enables the `cost_nt` statistic. Leave empty for single-rate tariffs (D1/D2): the VT price is then used for all consumption |
 
 Your supplier invoice usually lists these final prices (e.g. SSE prints them as *Aktuálne koncové ceny elektriny platné pre Vašu sadzbu*). Use those rather than adding up the supply and distribution unit prices from the invoice items — the final price also contains the per-kWh regulated fees (system operation TPS, system management TSS and the nuclear fund levy NJF, together about 0.037 €/kWh incl. VAT in 2026), which are easy to miss. Fixed monthly fees (supplier fee, distribution fee by breaker size) can't be represented in the Energy dashboard and are not included. A price change applies to months imported afterwards; already imported months are not recalculated, and the first import computes all past months at the current price.
 

@@ -712,8 +712,11 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         """
         price_vt = self.config.get(CONF_PRICE_VT)
         price_nt = self.config.get(CONF_PRICE_NT)
-        if price_vt is None or price_nt is None:
+        if price_vt is None:
             return
+        if price_nt is None:
+            # Single-rate tariff (D1/D2): all consumption is at the VT price.
+            price_nt = price_vt
         # Waiting for the recorder below deadlocks while Home Assistant is
         # still starting (the recorder doesn't commit until startup is done,
         # and startup waits for this integration's first refresh). Costs are
