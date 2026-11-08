@@ -23,6 +23,7 @@ from .const import (
     CONF_POINT_OF_DELIVERY,
     DEFAULT_POINT_OF_DELIVERY,
     DOMAIN,
+    PORTAL_URL,
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
     SENSOR_TYPE_LABELS,
@@ -94,8 +95,9 @@ class SsdImsSensor(CoordinatorEntity[SsdImsDataCoordinator], SensorEntity):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self.pod_id)},
             name=self.friendly_name,
-            manufacturer="IMS.SSD.sk",
-            model="IMS Portal",
+            manufacturer="Stredoslovenská distribučná, a.s.",
+            model="Odberné miesto elektriny",
+            configuration_url=PORTAL_URL,
             # The EIC code from the invoice, so the device can be matched to it.
             serial_number=self.pod_id,
         )

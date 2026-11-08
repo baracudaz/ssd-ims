@@ -50,7 +50,8 @@ API_DELAY_MAX: Final = 3  # maximum random delay in seconds
 PODS_CACHE_TTL: Final = timedelta(minutes=60)
 
 # API endpoints
-API_BASE_URL: Final = "https://ims.ssd.sk/api"
+PORTAL_URL: Final = "https://ims.ssd.sk"
+API_BASE_URL: Final = f"{PORTAL_URL}/api"
 API_LOGIN: Final = f"{API_BASE_URL}/account/login"
 API_PODS: Final = (
     f"{API_BASE_URL}/consumption-production/profile-data/get-points-of-delivery"
