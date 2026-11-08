@@ -10,6 +10,7 @@ from aiohttp import ClientSession
 
 from custom_components.ssd_ims.api_client import SsdImsApiClient
 from custom_components.ssd_ims.const import (
+    REGISTRY_HISTORY_START,
     CONF_POD_NAME_MAPPING,
     CONF_PRICE_NT,
     CONF_PRICE_VT,
@@ -297,6 +298,8 @@ class TestRegistryImport:
         assert registry["max_demand"] == 3.0
         assert registry["serial_number"] == "M1"
         assert coordinator._last_registry_fetch_date == date(2026, 11, 8)
+        # Always requests the full history, so the first import is complete.
+        assert client.get_registry_data.call_args.args[1] == REGISTRY_HISTORY_START
 
     async def test_no_cost_statistics_without_prices(self):
         client = MagicMock()

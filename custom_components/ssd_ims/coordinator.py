@@ -39,7 +39,7 @@ from .const import (
     REGISTER_STAT_CONSUMPTION_VT,
     REGISTER_STAT_COST_NT,
     REGISTER_STAT_COST_VT,
-    REGISTRY_LOOKBACK,
+    REGISTRY_HISTORY_START,
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
 )
@@ -576,7 +576,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 )
                 try:
                     readings = await self.api_client.get_registry_data(
-                        pod_id, now - REGISTRY_LOOKBACK, now + timedelta(days=1)
+                        pod_id, REGISTRY_HISTORY_START, now + timedelta(days=1)
                     )
                     if not readings:
                         continue

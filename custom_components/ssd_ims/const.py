@@ -1,6 +1,6 @@
 """Constants for SSD IMS integration."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
 # Domain
@@ -60,9 +60,12 @@ API_REGISTRY: Final = f"{API_BASE_URL}/consumption-production/registry-data"
 
 # Tariff register readings (Registrové údaje) are published roughly once a
 # month (00:00 local on the 1st, plus occasional ad-hoc readings). Each
-# refresh re-reads this window and imports whatever is newer than the last
-# imported statistic, which keeps the import idempotent.
-REGISTRY_LOOKBACK: Final = timedelta(days=400)
+# refresh re-reads the full history from this date — the portal has no
+# maximum range for this endpoint and the whole history is only ~12 rows per
+# year — and imports whatever is newer than the last imported statistic,
+# which keeps the import idempotent. The first import thus covers everything
+# since the meter was installed.
+REGISTRY_HISTORY_START: Final = datetime(2010, 1, 1, tzinfo=UTC)
 
 # Register-based statistic suffixes (appended to the sanitized POD name)
 REGISTER_STAT_CONSUMPTION_VT: Final = "consumption_vt"

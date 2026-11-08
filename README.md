@@ -60,7 +60,7 @@ The integration imports energy data into Home Assistant's statistics database wi
 | `ssd_ims:<pod_name>_cost_vt` | High tariff cost, monthly (EUR) — only when a VT price is set |
 | `ssd_ims:<pod_name>_cost_nt` | Low tariff cost, monthly (EUR) — only when an NT price is set |
 
-The VT/NT statistics are the differences between consecutive register readings. Each month's value is placed in the last hour of that month (a reading at 00:00 on 1 December closes November), so the Energy dashboard's month and year views show the correct split, while day/hour views show it as a single block at the end of the month. On first setup roughly the last 13 months are imported; the first available reading only serves as the baseline. No difference is computed across a meter replacement.
+The VT/NT statistics are the differences between consecutive register readings. Each month's value is placed in the last hour of that month (a reading at 00:00 on 1 December closes November), so the Energy dashboard's month and year views show the correct split, while day/hour views show it as a single block at the end of the month. On first setup the full register history available on the portal is imported (back to the meter's installation); the first reading only serves as the baseline. No difference is computed across a meter replacement.
 
 `<pod_name>` is derived from the friendly name you assign the POD during setup. **Renaming a POD later (via Reconfigure) changes its statistic ID and starts a new series** — the previous history isn't carried over. Pick a name you're happy to keep, or expect to reconfigure the Energy dashboard source if you rename it.
 
