@@ -32,6 +32,8 @@ Integrácia sťahuje údaje o spotrebe a dodávke elektriny z Portálu energetic
 
 ## Entity
 
+Každé odberné miesto je v Home Assistante samostatné zariadenie. Jeho EIC kód nájdete na stránke zariadenia v karte **Informácie o zariadení** ako **Sériové číslo**.
+
 Pre každé odberné miesto vznikne **8 entít**:
 
 | Entita | Popis |

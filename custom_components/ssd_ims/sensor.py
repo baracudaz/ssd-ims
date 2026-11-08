@@ -96,6 +96,8 @@ class SsdImsSensor(CoordinatorEntity[SsdImsDataCoordinator], SensorEntity):
             name=self.friendly_name,
             manufacturer="IMS.SSD.sk",
             model="IMS Portal",
+            # The EIC code from the invoice, so the device can be matched to it.
+            serial_number=self.pod_id,
         )
 
     def _setup_entity_naming(self, sensor_name: str) -> None:
