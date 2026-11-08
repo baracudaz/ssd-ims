@@ -221,6 +221,8 @@ def _make_coordinator(api_client, config, data=None):
     coordinator._last_registry_fetch_date = None
     coordinator._registry_readings = {}
     coordinator.data = data
+    # No supplier integration installed unless a test says otherwise
+    coordinator._supplier_prices = MagicMock(return_value=None)
     return coordinator
 
 
@@ -524,3 +526,105 @@ class TestHourlyCostSinglePrice:
     async def test_nt_price_alone_imports_no_hourly_cost(self):
         import_costs = await self._run({CONF_PRICE_NT: 0.1})
         import_costs.assert_not_awaited()
+
+
+class TestSupplierPrices:
+    """Prices from the sse_ezona sensors matched by the POD's EIC."""
+
+    def _coordinator(self, entities, states, config=None):
+        coordinator = _make_coordinator(MagicMock(), config or {})
+        del coordinator._supplier_prices  # use the real method
+        registry = MagicMock()
+        registry.async_get_entity_id.side_effect = lambda platform, domain, unique_id: (
+            entities.get(unique_id)
+            if (platform, domain) == ("sensor", "sse_ezona")
+            else None
+        )
+        coordinator.hass.states.get.side_effect = lambda entity_id: (
+            MagicMock(state=states[entity_id]) if entity_id in states else None
+        )
+        self._patch = patch(
+            "custom_components.ssd_ims.coordinator.er.async_get",
+            return_value=registry,
+        )
+        self._patch.start()
+        return coordinator
+
+    def teardown_method(self):
+        if hasattr(self, "_patch"):
+            self._patch.stop()
+
+    def test_two_rate_prices_override_the_options(self):
+        coordinator = self._coordinator(
+            {
+                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.home_vt",
+                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.home_nt",
+            },
+            {"sensor.home_vt": "0.250211", "sensor.home_nt": "0.137649"},
+            {CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.2},
+        )
+        assert coordinator._pod_prices(POD_ID) == (0.250211, 0.137649)
+
+    def test_single_rate_price_is_the_vt_price(self):
+        coordinator = self._coordinator(
+            {f"ELECTRICITY_{POD_ID}_price_jt": "sensor.home_jt"},
+            {"sensor.home_jt": "0.2"},
+        )
+        assert coordinator._pod_prices(POD_ID) == (0.2, None)
+
+    def test_without_supplier_sensors_the_options_are_used(self):
+        coordinator = self._coordinator(
+            {"ELECTRICITY_OTHER_price_vt": "sensor.other_vt"},
+            {"sensor.other_vt": "0.1"},
+            {CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.2},
+        )
+        assert coordinator._pod_prices(POD_ID) == (0.3, 0.2)
+
+    def test_unavailable_supplier_price_is_no_price(self):
+        """Don't fall back to a possibly stale manual price."""
+        coordinator = self._coordinator(
+            {
+                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.home_vt",
+                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.home_nt",
+            },
+            {"sensor.home_vt": "unavailable"},
+            {CONF_PRICE_VT: 0.3},
+        )
+        assert coordinator._pod_prices(POD_ID) == (None, None)
+
+    async def test_supplier_prices_are_used_for_register_costs(self):
+        coordinator = self._coordinator(
+            {
+                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.home_vt",
+                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.home_nt",
+            },
+            {"sensor.home_vt": "0.5", "sensor.home_nt": "0.1"},
+        )
+        coordinator.api_client.get_registry_data = AsyncMock(return_value=READINGS)
+
+        _, mock_add_stats = await _run_registry_update(coordinator)
+
+        imported = _imported(mock_add_stats)
+        assert [s["sum"] for s in imported[f"ssd_ims:{POD_ID.lower()}_cost_vt"]] == [
+            5.0,
+            7.5,
+        ]
+
+
+class TestHourlyCostSupplierPrices:
+    async def test_supplier_prices_are_used_without_options(self):
+        from homeassistant.core import CoreState
+
+        coordinator = _make_coordinator(MagicMock(), {}, data={})
+        coordinator._supplier_prices = MagicMock(return_value=(0.25, 0.14))
+        coordinator.hass.state = CoreState.running
+        coordinator._registry_readings = {POD_ID: READINGS}
+        coordinator._import_hourly_costs = AsyncMock()
+        recorder = MagicMock()
+        recorder.async_block_till_done = AsyncMock()
+        with patch(
+            "custom_components.ssd_ims.coordinator.get_instance",
+            return_value=recorder,
+        ):
+            await coordinator._update_hourly_costs([POD_ID])
+        assert coordinator._import_hourly_costs.await_args.args[-2:] == (0.25, 0.14)

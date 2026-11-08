@@ -16,6 +16,7 @@ from homeassistant.components.recorder.statistics import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
@@ -45,6 +46,7 @@ from .const import (
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
     STAT_ACTUAL_CONSUMPTION_COST,
+    SUPPLIER_PRICE_DOMAIN,
 )
 from .helpers import calculate_yesterday_range, sanitize_name
 from .models import ChartData, PointOfDelivery, RegistryReading
@@ -589,8 +591,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     # Read the prices only now: the options may have changed
                     # while the request above was in flight, and the buckets
                     # imported below are never repriced later.
-                    price_vt = self.config.get(CONF_PRICE_VT)
-                    price_nt = self.config.get(CONF_PRICE_NT)
+                    price_vt, price_nt = self._pod_prices(pod_id)
 
                     for attr, energy_key, cost_key, label, price in (
                         (
@@ -642,6 +643,59 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
             if all_ok:
                 self._last_registry_fetch_date = today
+
+    def _pod_prices(self, pod_id: str) -> tuple[float | None, float | None]:
+        """Return the (VT, NT) price per kWh incl. VAT for a POD.
+
+        Prices from the supplier integration's sensors for the same EIC win
+        over the prices entered in the options. When the supplier has
+        sensors for the POD but they have no value yet (e.g. right after a
+        restart), no price is returned rather than a possibly stale manual
+        one; the costs are then computed on a later run.
+        """
+        supplier = self._supplier_prices(pod_id)
+        if supplier is not None:
+            return supplier
+        price_vt = self.config.get(CONF_PRICE_VT)
+        price_nt = self.config.get(CONF_PRICE_NT)
+        return (
+            None if price_vt is None else float(price_vt),
+            None if price_nt is None else float(price_nt),
+        )
+
+    def _supplier_prices(self, pod_id: str) -> tuple[float | None, float | None] | None:
+        """Read the supplier integration's price sensors for a POD.
+
+        Returns None when the supplier has no price sensors for this EIC.
+        """
+        registry = er.async_get(self.hass)
+        entity_ids = {
+            tariff: registry.async_get_entity_id(
+                "sensor",
+                SUPPLIER_PRICE_DOMAIN,
+                f"ELECTRICITY_{pod_id}_price_{tariff}",
+            )
+            for tariff in ("vt", "nt", "jt")
+        }
+        if not any(entity_ids.values()):
+            return None
+
+        def _value(tariff: str) -> float | None:
+            if not (entity_id := entity_ids[tariff]):
+                return None
+            state = self.hass.states.get(entity_id)
+            try:
+                return float(state.state) if state else None
+            except (TypeError, ValueError):
+                return None
+
+        price_vt = _value("vt")
+        if price_vt is None:
+            price_vt = _value("jt")
+        price_nt = _value("nt")
+        if price_vt is None:
+            _LOGGER.debug("Supplier price sensors for %s have no value yet", pod_id)
+        return price_vt, price_nt
 
     @staticmethod
     def _register_periods(
@@ -714,18 +768,13 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         provisionally before their period's closing reading was published.
         Existing rows are overwritten in place by the recorder.
         """
-        price_vt = self.config.get(CONF_PRICE_VT)
-        price_nt = self.config.get(CONF_PRICE_NT)
-        if price_vt is None:
-            return
-        if price_nt is None:
-            # Single-rate tariff (D1/D2): all consumption is at the VT price.
-            price_nt = price_vt
         # Waiting for the recorder below deadlocks while Home Assistant is
         # still starting (the recorder doesn't commit until startup is done,
         # and startup waits for this integration's first refresh). Costs are
         # computed on the refresh the background backfill requests instead.
         if self.data is None or self.hass.state is not CoreState.running:
+            return
+        if not any(self._pod_prices(pod_id)[0] is not None for pod_id in pod_ids):
             return
 
         recorder = get_instance(self.hass)
@@ -734,6 +783,12 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         await recorder.async_block_till_done()
 
         for pod_id in pod_ids:
+            price_vt, price_nt = self._pod_prices(pod_id)
+            if price_vt is None:
+                continue
+            if price_nt is None:
+                # Single-rate tariff (D1/D2): all consumption is at the VT price.
+                price_nt = price_vt
             readings = self._registry_readings.get(pod_id)
             periods = self._register_periods(readings or [])
             if not periods:
