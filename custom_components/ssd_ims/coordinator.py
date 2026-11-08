@@ -31,6 +31,7 @@ from .const import (
     CONF_PRICE_NT,
     CONF_PRICE_VT,
     CONF_SCAN_INTERVAL,
+    CURRENCY,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -565,7 +566,6 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             now = dt_util.now()
             price_vt = self.config.get(CONF_PRICE_VT)
             price_nt = self.config.get(CONF_PRICE_NT)
-            currency = self.hass.config.currency
             all_ok = True
 
             for pod_id in pod_ids:
@@ -609,7 +609,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                             await self._import_register_series(
                                 self._build_statistic_id(pod_name, cost_key),
                                 f"{pod_name} Cost {label}",
-                                currency,
+                                CURRENCY,
                                 None,
                                 [(b, d * float(price)) for b, d in deltas],
                             )

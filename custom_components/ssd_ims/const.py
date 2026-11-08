@@ -15,10 +15,13 @@ CONF_POINT_OF_DELIVERY: Final = (
 CONF_POD_NAME_MAPPING: Final = "pod_name_mapping"
 CONF_ENABLE_HISTORY_IMPORT: Final = "enable_history_import"
 CONF_HISTORY_DAYS: Final = "history_days"
-# Optional per-kWh prices (incl. VAT, in the HA instance's currency) used to
-# compute cost statistics for the monthly tariff register readings.
+# Optional per-kWh prices (incl. VAT) used to compute cost statistics for
+# the monthly tariff register readings.
 CONF_PRICE_VT: Final = "price_vt"
 CONF_PRICE_NT: Final = "price_nt"
+# SSD operates in Slovakia, so tariff prices and costs are always in euros,
+# regardless of the currency configured in Home Assistant.
+CURRENCY: Final = "EUR"
 
 # Defaults
 DEFAULT_SCAN_INTERVAL: Final = 360  # 6 hours - sensible for daily data

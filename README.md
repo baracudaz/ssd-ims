@@ -57,8 +57,8 @@ The integration imports energy data into Home Assistant's statistics database wi
 | `ssd_ims:<pod_name>_actual_supply` | Cumulative energy supply/production (kWh) |
 | `ssd_ims:<pod_name>_consumption_vt` | High tariff (VT) consumption, monthly (kWh) |
 | `ssd_ims:<pod_name>_consumption_nt` | Low tariff (NT) consumption, monthly (kWh) |
-| `ssd_ims:<pod_name>_cost_vt` | High tariff cost, monthly (your currency) — only when a VT price is set |
-| `ssd_ims:<pod_name>_cost_nt` | Low tariff cost, monthly (your currency) — only when an NT price is set |
+| `ssd_ims:<pod_name>_cost_vt` | High tariff cost, monthly (EUR) — only when a VT price is set |
+| `ssd_ims:<pod_name>_cost_nt` | Low tariff cost, monthly (EUR) — only when an NT price is set |
 
 The VT/NT statistics are the differences between consecutive register readings. Each month's value is placed in the last hour of that month (a reading at 00:00 on 1 December closes November), so the Energy dashboard's month and year views show the correct split, while day/hour views show it as a single block at the end of the month. On first setup roughly the last 13 months are imported; the first available reading only serves as the baseline. No difference is computed across a meter replacement.
 
@@ -111,7 +111,7 @@ After setup, you can change these via **Settings** → **Devices & Services** �
 | Option | Description |
 |--------|-------------|
 | Update Interval | How often to check for new data |
-| High tariff (VT) price | Optional. Final price per kWh incl. VAT and all per-kWh fees — enables the `cost_vt` statistic |
+| High tariff (VT) price | Optional. Final price in EUR per kWh incl. VAT and all per-kWh fees — enables the `cost_vt` statistic |
 | Low tariff (NT) price | Optional. Same for NT — enables the `cost_nt` statistic |
 
 Your supplier invoice usually lists these final prices (e.g. SSE prints them as *Aktuálne koncové ceny elektriny platné pre Vašu sadzbu*). Fixed monthly fees (supplier fee, distribution fee by breaker size) can't be represented in the Energy dashboard and are not included. A price change applies to months imported afterwards; already imported months are not recalculated, and the first import computes all past months at the current price.
@@ -133,6 +133,8 @@ Home Assistant only applies a price configured in the Energy dashboard to statis
 1. Click **Add Consumption** and select `ssd_ims:<pod_name>_consumption_vt`
 2. Under cost, choose **Use an entity tracking the total costs** and select `ssd_ims:<pod_name>_cost_vt`
 3. Repeat with `ssd_ims:<pod_name>_consumption_nt` / `ssd_ims:<pod_name>_cost_nt`
+
+Prices and costs are always in EUR. The Energy dashboard labels costs with Home Assistant's own currency, so set **Settings** → **System** → **General** → **Currency** to EUR.
 
 **Use either `actual_consumption` or the VT + NT pair, not both** — they measure the same energy, so adding both double-counts it. `actual_consumption` gives an hourly timeline; VT/NT gives a correct monthly tariff split and cost.
 

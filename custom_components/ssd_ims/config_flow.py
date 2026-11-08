@@ -28,6 +28,7 @@ from .const import (
     CONF_PRICE_NT,
     CONF_PRICE_VT,
     CONF_SCAN_INTERVAL,
+    CURRENCY,
     DEFAULT_ENABLE_HISTORY_IMPORT,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
@@ -379,14 +380,13 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
             await coordinator.update_config({**self.config_entry.data, **user_input})
             return self.async_create_entry(title="", data=user_input)
 
-        currency = self.hass.config.currency
         price_selector = NumberSelector(
             NumberSelectorConfig(
                 min=0,
                 max=100,
                 step="any",
                 mode=NumberSelectorMode.BOX,
-                unit_of_measurement=f"{currency}/kWh",
+                unit_of_measurement=f"{CURRENCY}/kWh",
             )
         )
         options = self.config_entry.options

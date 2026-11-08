@@ -194,7 +194,8 @@ class TestRegistryDeltas:
 def _make_coordinator(api_client, config, data=None):
     coordinator = SsdImsDataCoordinator.__new__(SsdImsDataCoordinator)
     coordinator.hass = MagicMock()
-    coordinator.hass.config.currency = "EUR"
+    # HA currency deliberately not EUR: costs must still be in EUR
+    coordinator.hass.config.currency = "GBP"
     coordinator.api_client = api_client
     coordinator.config = config
     coordinator.entry = MagicMock()
