@@ -491,13 +491,14 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             if previous is not None:
                 prev_serial, prev_value = previous
                 if reading.serial_number != prev_serial or value < prev_value:
+                    # No serial numbers in the log: they identify the meter.
                     _LOGGER.info(
-                        "Register %s reset at %s (meter %s -> %s); "
-                        "skipping delta across the change",
+                        "Register %s reset at %s (%s); skipping delta across it",
                         attr,
                         reading.reading_time,
-                        prev_serial,
-                        reading.serial_number,
+                        "meter replaced"
+                        if reading.serial_number != prev_serial
+                        else "counter decreased",
                     )
                 else:
                     bucket = cls._registry_bucket(reading.reading_time)
@@ -587,7 +588,6 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     if not readings:
                         continue
                     self._registry_readings[pod_id] = readings
-
                     for attr, energy_key, cost_key, label, price in (
                         (
                             "consumption_tariff1",

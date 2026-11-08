@@ -85,7 +85,7 @@ class TestGetRegistryData:
         yield client
         await session.close()
 
-    async def test_request_payload_and_sorted_parsing(self, api_client):
+    async def test_request_payload_and_sorted_parsing(self, api_client, caplog):
         response_body = {
             "columns": [],
             "page": {"totalRows": 3, "currentPage": 1, "pageSize": 500},
@@ -108,6 +108,9 @@ class TestGetRegistryData:
                 datetime(2026, 11, 9, tzinfo=UTC),
             )
 
+        # Unparseable row skipped (without logging it — rows contain the
+        # meter serial), remaining rows sorted by time.
+        assert "garbage" not in caplog.text
         # Unparseable row skipped, remaining rows sorted by time.
         assert [r.consumption_tariff1 for r in readings] == [2, 3]
 
@@ -169,6 +172,17 @@ class TestRegistryDeltas:
         ]
         deltas = SsdImsDataCoordinator._registry_deltas(readings, "consumption_tariff2")
         assert deltas == [(datetime(2026, 3, 31, 21, tzinfo=UTC), 100)]
+
+    def test_reset_log_never_contains_meter_serials(self, caplog):
+        readings = [
+            _reading(datetime(2026, 1, 31, 23, tzinfo=UTC), 100, 1000, serial="S111"),
+            _reading(datetime(2026, 2, 28, 23, tzinfo=UTC), 5, 50, serial="S222"),
+        ]
+        with caplog.at_level("INFO"):
+            SsdImsDataCoordinator._registry_deltas(readings, "consumption_tariff1")
+        assert "meter replaced" in caplog.text
+        assert "S111" not in caplog.text
+        assert "S222" not in caplog.text
 
     def test_counter_going_backwards_is_skipped(self):
         readings = [

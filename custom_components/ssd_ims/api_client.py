@@ -488,7 +488,12 @@ class SsdImsApiClient:
             try:
                 readings.append(RegistryReading.from_row(values or []))
             except (ValidationError, ValueError, TypeError) as e:
-                _LOGGER.warning("Skipping unparseable registry row %s: %s", row, e)
+                # Log the error, not the row: it contains the meter serial.
+                _LOGGER.warning(
+                    "Skipping unparseable registry row (%d values): %s",
+                    len(values) if isinstance(values, list) else 0,
+                    type(e).__name__,
+                )
 
         readings.sort(key=lambda r: r.reading_time)
         _LOGGER.debug(
