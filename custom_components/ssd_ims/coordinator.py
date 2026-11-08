@@ -14,9 +14,11 @@ from homeassistant.components.recorder.statistics import (
     StatisticMeanType,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.const import Platform
+from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
@@ -84,6 +86,12 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         self._last_registry_fetch_date: date | None = None
         # Latest fetched register readings per POD, for pricing hourly costs
         self._registry_readings: dict[str, list[RegistryReading]] = {}
+        # Supplier price sensors being watched, and the listener watching them.
+        # A price change requests a refresh that only reprices (see
+        # _async_update_data), without new portal requests.
+        self._supplier_entity_ids: frozenset[str] = frozenset()
+        self._unsub_supplier: CALLBACK_TYPE | None = None
+        self._reprice_requested = False
 
         scan_interval = timedelta(
             minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -124,6 +132,9 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             # Once we have confirmed that all statistics are current, skip further
             # API calls until the next calendar day.
             if self._last_successful_data_date == today and self.data:
+                if self._reprice_requested:
+                    await self._async_reprice()
+                    return self.data
                 _LOGGER.debug(
                     "Data already up to date for %s — skipping API calls", today
                 )
@@ -183,8 +194,10 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     }
                 )
 
+            self._reprice_requested = False
             await self._update_registry(pod_ids, all_pod_data, today)
             await self._update_hourly_costs(pod_ids)
+            self._watch_supplier_prices(pod_ids)
 
             if stats_complete:
                 self._last_successful_data_date = today
@@ -588,43 +601,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     if not readings:
                         continue
                     self._registry_readings[pod_id] = readings
-                    # Read the prices only now: the options may have changed
-                    # while the request above was in flight, and the buckets
-                    # imported below are never repriced later.
-                    price_vt, price_nt = self._pod_prices(pod_id)
-
-                    for attr, energy_key, cost_key, label, price in (
-                        (
-                            "consumption_tariff1",
-                            REGISTER_STAT_CONSUMPTION_VT,
-                            REGISTER_STAT_COST_VT,
-                            "VT",
-                            price_vt,
-                        ),
-                        (
-                            "consumption_tariff2",
-                            REGISTER_STAT_CONSUMPTION_NT,
-                            REGISTER_STAT_COST_NT,
-                            "NT",
-                            price_nt,
-                        ),
-                    ):
-                        deltas = self._registry_deltas(readings, attr)
-                        await self._import_register_series(
-                            self._build_statistic_id(pod_name, energy_key),
-                            f"{pod_name} Consumption {label}",
-                            "kWh",
-                            "energy",
-                            deltas,
-                        )
-                        if price is not None:
-                            await self._import_register_series(
-                                self._build_statistic_id(pod_name, cost_key),
-                                f"{pod_name} Cost {label}",
-                                CURRENCY,
-                                None,
-                                [(b, d * float(price)) for b, d in deltas],
-                            )
+                    await self._import_register_stats(pod_id, pod_name, readings)
 
                     latest = readings[-1]
                     all_pod_data.setdefault(pod_id, {})["registry"] = {
@@ -643,6 +620,120 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
             if all_ok:
                 self._last_registry_fetch_date = today
+
+    async def _import_register_stats(
+        self, pod_id: str, pod_name: str, readings: list[RegistryReading]
+    ) -> None:
+        """Import the monthly VT/NT energy and, when priced, cost statistics."""
+        # Read the prices only now: the options may have changed while the
+        # registry request was in flight, and imported buckets are never
+        # repriced later.
+        price_vt, price_nt = self._pod_prices(pod_id)
+        for attr, energy_key, cost_key, label, price in (
+            (
+                "consumption_tariff1",
+                REGISTER_STAT_CONSUMPTION_VT,
+                REGISTER_STAT_COST_VT,
+                "VT",
+                price_vt,
+            ),
+            (
+                "consumption_tariff2",
+                REGISTER_STAT_CONSUMPTION_NT,
+                REGISTER_STAT_COST_NT,
+                "NT",
+                price_nt,
+            ),
+        ):
+            deltas = self._registry_deltas(readings, attr)
+            await self._import_register_series(
+                self._build_statistic_id(pod_name, energy_key),
+                f"{pod_name} Consumption {label}",
+                "kWh",
+                "energy",
+                deltas,
+            )
+            if price is not None:
+                # Buckets skipped while the price was unknown are imported on
+                # a later run: only buckets newer than the cost series' own
+                # last statistic are appended.
+                await self._import_register_series(
+                    self._build_statistic_id(pod_name, cost_key),
+                    f"{pod_name} Cost {label}",
+                    CURRENCY,
+                    None,
+                    [(b, d * price) for b, d in deltas],
+                )
+
+    async def _async_reprice(self) -> None:
+        """Recompute costs from cached readings after a supplier price change."""
+        self._reprice_requested = False
+        pod_ids = list(self._registry_readings)
+        _LOGGER.debug("Supplier price changed, recomputing costs")
+        async with self._registry_lock:
+            for pod_id in pod_ids:
+                pod_name = self.config.get(CONF_POD_NAME_MAPPING, {}).get(
+                    pod_id, pod_id
+                )
+                try:
+                    await self._import_register_stats(
+                        pod_id, pod_name, self._registry_readings[pod_id]
+                    )
+                except Exception as e:
+                    _LOGGER.error("Error importing register costs: %s", e)
+        await self._update_hourly_costs(pod_ids)
+
+    def _watch_supplier_prices(self, pod_ids: list[str]) -> None:
+        """Request a repricing refresh when a supplier price sensor changes."""
+        registry = er.async_get(self.hass)
+        entity_ids = frozenset(
+            entity_id
+            for pod_id in pod_ids
+            for tariff in ("vt", "nt", "jt")
+            if (entity_id := self._supplier_entity_id(registry, pod_id, tariff))
+        )
+        if entity_ids == self._supplier_entity_ids:
+            return
+        self.async_unwatch_supplier_prices()
+        self._supplier_entity_ids = entity_ids
+        if entity_ids:
+            self._unsub_supplier = async_track_state_change_event(
+                self.hass, list(entity_ids), self._async_supplier_price_changed
+            )
+
+    @callback
+    def async_unwatch_supplier_prices(self) -> None:
+        """Stop watching the supplier price sensors."""
+        if self._unsub_supplier:
+            self._unsub_supplier()
+            self._unsub_supplier = None
+        self._supplier_entity_ids = frozenset()
+
+    @callback
+    def _async_supplier_price_changed(self, event: Event) -> None:
+        """Flag a repricing when a supplier price gets a new numeric value."""
+        old, new = event.data.get("old_state"), event.data.get("new_state")
+        if new is None or (old is not None and old.state == new.state):
+            return
+        try:
+            float(new.state)
+        except ValueError:
+            return
+        self._reprice_requested = True
+        # Debounced by the coordinator, so VT and NT changing together cause
+        # a single refresh.
+        self.hass.async_create_task(self.async_request_refresh())
+
+    @staticmethod
+    def _supplier_entity_id(
+        registry: er.EntityRegistry, pod_id: str, tariff: str
+    ) -> str | None:
+        """Entity ID of the supplier's price sensor for a POD and tariff."""
+        return registry.async_get_entity_id(
+            Platform.SENSOR,
+            SUPPLIER_PRICE_DOMAIN,
+            f"ELECTRICITY_{pod_id}_price_{tariff}",
+        )
 
     def _pod_prices(self, pod_id: str) -> tuple[float | None, float | None]:
         """Return the (VT, NT) price per kWh incl. VAT for a POD.
@@ -666,15 +757,14 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
     def _supplier_prices(self, pod_id: str) -> tuple[float | None, float | None] | None:
         """Read the supplier integration's price sensors for a POD.
 
-        Returns None when the supplier has no price sensors for this EIC.
+        Returns None when the supplier has no price sensors for this EIC,
+        and (None, None) while any of them has no value: pricing night
+        consumption with the VT price just because the NT sensor is
+        unavailable would be wrong.
         """
         registry = er.async_get(self.hass)
         entity_ids = {
-            tariff: registry.async_get_entity_id(
-                "sensor",
-                SUPPLIER_PRICE_DOMAIN,
-                f"ELECTRICITY_{pod_id}_price_{tariff}",
-            )
+            tariff: self._supplier_entity_id(registry, pod_id, tariff)
             for tariff in ("vt", "nt", "jt")
         }
         if not any(entity_ids.values()):
@@ -689,13 +779,11 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             except (TypeError, ValueError):
                 return None
 
-        price_vt = _value("vt")
-        if price_vt is None:
-            price_vt = _value("jt")
-        price_nt = _value("nt")
-        if price_vt is None:
-            _LOGGER.debug("Supplier price sensors for %s have no value yet", pod_id)
-        return price_vt, price_nt
+        values = {t: _value(t) for t, entity_id in entity_ids.items() if entity_id}
+        if None in values.values():
+            _LOGGER.debug("Supplier price sensors have no value yet")
+            return None, None
+        return values.get("vt", values.get("jt")), values.get("nt")
 
     @staticmethod
     def _register_periods(
