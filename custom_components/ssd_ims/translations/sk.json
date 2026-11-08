@@ -62,7 +62,7 @@
     "step": {
       "init": {
         "title": "Možnosti SSD IMS",
-        "description": "Úprava nastavení integrácie. Voliteľné ceny VT/NT (EUR za kWh, vrátane DPH) sa použijú na import mesačných štatistík nákladov z registrových údajov; ak ich nevyplníte, náklady sa neimportujú.",
+        "description": "Úprava nastavení integrácie. Voliteľné ceny VT/NT sú koncové ceny v EUR za kWh vrátane DPH, ako ich uvádza faktúra dodávateľa (SSE: „Aktuálne koncové ceny elektriny platné pre Vašu sadzbu“). Použijú sa na import hodinových nákladov pre štatistiku skutočnej spotreby a mesačných nákladov z registrových údajov. Pri jednotarifnej sadzbe (D1/D2) vyplňte iba VT; ak nevyplníte žiadnu, náklady sa neimportujú.",
         "data": {
           "scan_interval": "Interval aktualizácie",
           "price_vt": "Cena za vysokú tarifu (VT)",
