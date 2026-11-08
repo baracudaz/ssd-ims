@@ -69,7 +69,18 @@ These statistics can be used directly in the Energy dashboard configuration.
 
 ## Installation
 
-### Method 1: HACS (Recommended)
+### Method 1: Marketplace (Recommended, Home Assistant 2026.11+)
+
+Since Home Assistant 2026.11, HACS is built in as the **Marketplace**.
+
+1. Go to **Settings** → **Marketplace** (the first time, accept the warning shown there)
+2. Search for "Stredoslovenská distribučná (SSD IMS)" and open it
+3. Select **Install**, check the version and select **Install** again
+4. The setup opens right away; if Home Assistant needs a restart first, a Repairs entry offers it
+
+If you installed the integration with HACS before 2026.11, there's nothing to do: on the first start after the update the Marketplace takes over from HACS, and the integration stays installed and keeps getting updates (under **Settings** → **Updates**).
+
+### Method 2: HACS (Home Assistant before 2026.11)
 
 1. Open HACS in Home Assistant
 2. Click on "Integrations"
@@ -78,7 +89,7 @@ These statistics can be used directly in the Energy dashboard configuration.
 5. Click "Install"
 6. Restart Home Assistant
 
-### Method 2: Manual Installation
+### Method 3: Manual Installation
 
 1. Download this repository
 2. Copy the `custom_components/ssd_ims` folder to your Home Assistant `config/custom_components/` directory

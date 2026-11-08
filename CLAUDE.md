@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Home Assistant custom integration (HACS) for the SSD IMS energy portal (`https://ims.ssd.sk`). It logs into the portal, discovers Points of Delivery (PODs), and imports hourly consumption/supply data into Home Assistant's long-term statistics for the Energy dashboard. All integration code lives in `custom_components/ssd_ims/`.
+A Home Assistant custom integration (installed through HACS, which Home Assistant 2026.11+ has built in as the Marketplace — same catalog, same `hacs.json`) for the SSD IMS energy portal (`https://ims.ssd.sk`). It logs into the portal, discovers Points of Delivery (PODs), and imports hourly consumption/supply data into Home Assistant's long-term statistics for the Energy dashboard. All integration code lives in `custom_components/ssd_ims/`.
 
 ## Commands
 
@@ -25,7 +25,7 @@ make docker-down
 
 Run a single test: `.venv/bin/python -m pytest tests/test_api_client.py::TestSsdImsApiClient::TestAuthentication::test_successful_authentication -v`
 
-`asyncio_mode = "auto"` is set in `pytest.ini`, so async test functions don't need `@pytest.mark.asyncio`. There is no `pyproject.toml` in this repo — `requirements.txt` is the single, pinned source of truth for dev/test dependencies, and neither Home Assistant's integration loader nor HACS reads project-level Python packaging metadata (they only read `custom_components/ssd_ims/manifest.json` and `hacs.json`), so there was nothing else it would have been needed for.
+`asyncio_mode = "auto"` is set in `pytest.ini`, so async test functions don't need `@pytest.mark.asyncio`. The test harness is `pytest-homeassistant`, published by Home Assistant core with the same version as `homeassistant` (bump both together); it loads automatically and needs `-p no:respx` in `pytest.ini`, otherwise every test fails with "httpx was already imported". The older community `pytest-homeassistant-custom-component` is discontinued — never install both. There is no `pyproject.toml` in this repo — `requirements.txt` is the single, pinned source of truth for dev/test dependencies, and neither Home Assistant's integration loader nor HACS reads project-level Python packaging metadata (they only read `custom_components/ssd_ims/manifest.json` and `hacs.json`), so there was nothing else it would have been needed for.
 
 `scripts/develop` runs Home Assistant directly (non-Docker) against `./config`, with `custom_components/` on `PYTHONPATH`.
 
