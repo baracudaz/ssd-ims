@@ -74,5 +74,15 @@
         }
       }
     }
+  },
+  "selector": {
+    "scan_interval": {
+      "options": {
+        "5": "5 minutes (debugging only)",
+        "360": "6 hours (recommended)",
+        "720": "12 hours",
+        "1440": "24 hours"
+      }
+    }
   }
 }

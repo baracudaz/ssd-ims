@@ -31,6 +31,8 @@ DEFAULT_HISTORY_DAYS: Final = 7  # Import last 7 days of past data by default
 
 # Options - Data is only available up to yesterday and released once per day
 # So polling frequently doesn't make sense
+# Keys are the selectable intervals in minutes; the UI labels come from the
+# "selector.scan_interval" translations, these are only fallbacks.
 SCAN_INTERVAL_OPTIONS: Final = {
     5: "5 minutes (debugging only)",
     360: "6 hours (recommended)",

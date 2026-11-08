@@ -102,6 +102,8 @@ async def test_full_setup_flow_creates_entry(hass: HomeAssistant):
     assert result["data"][CONF_POINT_OF_DELIVERY] == [POD_ID]
     assert result["data"][CONF_POD_NAME_MAPPING] == {POD_ID: "Home"}
     assert result["data"][CONF_HISTORY_DAYS] > 0
+    # Default interval from the select (a string option) is stored as minutes.
+    assert result["data"]["scan_interval"] == 360
 
 
 async def test_invalid_credentials_shows_error(hass: HomeAssistant):
@@ -290,11 +292,14 @@ async def test_options_flow_updates_scan_interval(hass: HomeAssistant):
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"scan_interval": 720},
+        {"scan_interval": "720"},
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     coordinator.update_config.assert_called_once()
+    # The UI sends the selected option as a string; it's stored as minutes.
+    assert entry.options["scan_interval"] == 720
+    assert coordinator.update_config.call_args.args[0]["scan_interval"] == 720
 
 
 async def test_options_flow_saves_tariff_prices(hass: HomeAssistant):
@@ -319,7 +324,7 @@ async def test_options_flow_saves_tariff_prices(hass: HomeAssistant):
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"scan_interval": 360, "price_vt": 0.2502, "price_nt": 0.1376},
+        {"scan_interval": "360", "price_vt": 0.2502, "price_nt": 0.1376},
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -349,7 +354,7 @@ async def test_options_flow_prices_are_optional(hass: HomeAssistant):
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"scan_interval": 360}
+        result["flow_id"], {"scan_interval": "360"}
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY

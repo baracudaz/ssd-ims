@@ -17,6 +17,9 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .api_client import SsdImsApiClient
@@ -41,6 +44,29 @@ from .helpers import sanitize_name
 from .models import PointOfDelivery
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _scan_interval_selector() -> SelectSelector:
+    """Update-interval choice with labels from the translation files.
+
+    Select options are strings, so the chosen value is converted back to
+    minutes (int) by _scan_interval_minutes before it's stored.
+    """
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=[str(minutes) for minutes in SCAN_INTERVAL_OPTIONS],
+            translation_key=CONF_SCAN_INTERVAL,
+            mode=SelectSelectorMode.LIST,
+        )
+    )
+
+
+def _scan_interval_minutes(value: Any) -> int:
+    """Convert a selected update interval back to minutes."""
+    minutes = int(value)
+    if minutes not in SCAN_INTERVAL_OPTIONS:
+        raise vol.Invalid(f"Unsupported update interval: {value}")
+    return minutes
 
 
 class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -287,8 +313,8 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            self._scan_interval = user_input.get(
-                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+            self._scan_interval = _scan_interval_minutes(
+                user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
             )
             self._enable_history_import = user_input.get(
                 CONF_ENABLE_HISTORY_IMPORT, DEFAULT_ENABLE_HISTORY_IMPORT
@@ -341,8 +367,8 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        CONF_SCAN_INTERVAL, default=default_scan_interval
-                    ): vol.In(SCAN_INTERVAL_OPTIONS),
+                        CONF_SCAN_INTERVAL, default=str(default_scan_interval)
+                    ): _scan_interval_selector(),
                     vol.Optional(
                         CONF_ENABLE_HISTORY_IMPORT,
                         default=default_enable_history_import,
@@ -375,6 +401,12 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            user_input = {
+                **user_input,
+                CONF_SCAN_INTERVAL: _scan_interval_minutes(
+                    user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+                ),
+            }
             # Update coordinator configuration
             coordinator = self.config_entry.runtime_data
             await coordinator.update_config({**self.config_entry.data, **user_input})
@@ -397,13 +429,15 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
-                        default=options.get(
-                            CONF_SCAN_INTERVAL,
-                            self.config_entry.data.get(
-                                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-                            ),
+                        default=str(
+                            options.get(
+                                CONF_SCAN_INTERVAL,
+                                self.config_entry.data.get(
+                                    CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+                                ),
+                            )
                         ),
-                    ): vol.In(SCAN_INTERVAL_OPTIONS),
+                    ): _scan_interval_selector(),
                     # suggested_value (not default) so the field can be
                     # cleared again to stop importing costs.
                     vol.Optional(

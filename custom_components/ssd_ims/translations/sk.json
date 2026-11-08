@@ -74,5 +74,15 @@
         }
       }
     }
+  },
+  "selector": {
+    "scan_interval": {
+      "options": {
+        "5": "5 minút (len na ladenie)",
+        "360": "6 hodín (odporúčané)",
+        "720": "12 hodín",
+        "1440": "24 hodín"
+      }
+    }
   }
 }
