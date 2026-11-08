@@ -10,10 +10,11 @@ from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
+    statistics_during_period,
     StatisticMeanType,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
@@ -31,6 +32,7 @@ from .const import (
     CONF_PRICE_NT,
     CONF_PRICE_VT,
     CONF_SCAN_INTERVAL,
+    COST_RECOMPUTE_PERIODS,
     CURRENCY,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL,
@@ -42,6 +44,7 @@ from .const import (
     REGISTRY_HISTORY_START,
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
+    STAT_ACTUAL_CONSUMPTION_COST,
 )
 from .helpers import calculate_yesterday_range, sanitize_name
 from .models import ChartData, PointOfDelivery, RegistryReading
@@ -77,6 +80,8 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         # profile-data smart-polling gate.
         self._registry_lock = asyncio.Lock()
         self._last_registry_fetch_date: date | None = None
+        # Latest fetched register readings per POD, for pricing hourly costs
+        self._registry_readings: dict[str, list[RegistryReading]] = {}
 
         scan_interval = timedelta(
             minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -177,6 +182,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 )
 
             await self._update_registry(pod_ids, all_pod_data, today)
+            await self._update_hourly_costs(pod_ids)
 
             if stats_complete:
                 self._last_successful_data_date = today
@@ -580,6 +586,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     )
                     if not readings:
                         continue
+                    self._registry_readings[pod_id] = readings
 
                     for attr, energy_key, cost_key, label, price in (
                         (
@@ -631,6 +638,216 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
             if all_ok:
                 self._last_registry_fetch_date = today
+
+    @staticmethod
+    def _register_periods(
+        readings: list[RegistryReading],
+    ) -> list[tuple[datetime, datetime, float | None]]:
+        """Return (start, end, vt_share) for each pair of consecutive readings.
+
+        vt_share is the VT fraction of the period's consumption, or None when
+        nothing was consumed. Periods across a meter replacement or a counter
+        that went backwards are skipped.
+        """
+        periods: list[tuple[datetime, datetime, float | None]] = []
+        ordered = [
+            r
+            for r in sorted(readings, key=lambda r: r.reading_time)
+            if r.consumption_tariff1 is not None and r.consumption_tariff2 is not None
+        ]
+        for prev, cur in zip(ordered, ordered[1:], strict=False):
+            d_vt = cur.consumption_tariff1 - prev.consumption_tariff1
+            d_nt = cur.consumption_tariff2 - prev.consumption_tariff2
+            if cur.serial_number != prev.serial_number or d_vt < 0 or d_nt < 0:
+                continue
+            total = d_vt + d_nt
+            periods.append(
+                (
+                    prev.reading_time.astimezone(UTC),
+                    cur.reading_time.astimezone(UTC),
+                    d_vt / total if total > 0 else None,
+                )
+            )
+        return periods
+
+    @staticmethod
+    def _blended_price(
+        periods: list[tuple[datetime, datetime, float | None]],
+        hour_start: datetime,
+        price_vt: float,
+        price_nt: float,
+    ) -> float:
+        """Price per kWh for an hour, weighted by its register period's VT/NT mix.
+
+        An hour belongs to the period its end falls into (a 00:00 reading
+        closes the 23:00 hour). Hours outside all known periods — typically
+        the current month, before its closing reading — use the nearest
+        period's mix; periods without consumption fall back to the nearest
+        earlier period that has one.
+        """
+        hour_end = hour_start + timedelta(hours=1)
+        index = len(periods) - 1
+        for i, (start, end, _) in enumerate(periods):
+            if hour_end <= end:
+                index = i if hour_end > start or i == 0 else i - 1
+                break
+        share = None
+        for i in range(index, -1, -1):
+            if periods[i][2] is not None:
+                share = periods[i][2]
+                break
+        if share is None:
+            share = next((p[2] for p in periods if p[2] is not None), 0.0)
+        return share * price_vt + (1 - share) * price_nt
+
+    async def _update_hourly_costs(self, pod_ids: list[str]) -> None:
+        """Import an hourly cost statistic for actual_consumption.
+
+        Lets the Energy dashboard use the hourly consumption statistic with
+        costs: each hour's kWh x the blended VT/NT price of its register
+        period. Costs from COST_RECOMPUTE_PERIODS register periods back are
+        recomputed on every run, which corrects hours that were priced
+        provisionally before their period's closing reading was published.
+        Existing rows are overwritten in place by the recorder.
+        """
+        price_vt = self.config.get(CONF_PRICE_VT)
+        price_nt = self.config.get(CONF_PRICE_NT)
+        if price_vt is None or price_nt is None:
+            return
+        # Waiting for the recorder below deadlocks while Home Assistant is
+        # still starting (the recorder doesn't commit until startup is done,
+        # and startup waits for this integration's first refresh). Costs are
+        # computed on the refresh the background backfill requests instead.
+        if self.data is None or self.hass.state is not CoreState.running:
+            return
+
+        recorder = get_instance(self.hass)
+        # Make sure this run's energy imports are committed before reading
+        # them back.
+        await recorder.async_block_till_done()
+
+        for pod_id in pod_ids:
+            readings = self._registry_readings.get(pod_id)
+            periods = self._register_periods(readings or [])
+            if not periods:
+                continue
+            pod_name = self.config.get(CONF_POD_NAME_MAPPING, {}).get(pod_id, pod_id)
+            energy_id = self._build_statistic_id(
+                pod_name, SENSOR_TYPE_ACTUAL_CONSUMPTION
+            )
+            cost_id = self._build_statistic_id(pod_name, STAT_ACTUAL_CONSUMPTION_COST)
+            try:
+                await self._import_hourly_costs(
+                    energy_id,
+                    cost_id,
+                    f"{pod_name} Actual Consumption Cost",
+                    periods,
+                    float(price_vt),
+                    float(price_nt),
+                )
+            except Exception as e:
+                _LOGGER.error("Error computing hourly costs for %s: %s", cost_id, e)
+
+    async def _import_hourly_costs(
+        self,
+        energy_id: str,
+        cost_id: str,
+        name: str,
+        periods: list[tuple[datetime, datetime, float | None]],
+        price_vt: float,
+        price_nt: float,
+    ) -> None:
+        recorder = get_instance(self.hass)
+
+        def _stats(statistic_id: str, start: datetime) -> list[dict[str, Any]]:
+            result = statistics_during_period(
+                self.hass, start, None, {statistic_id}, "hour", None, {"sum"}
+            )
+            return result.get(statistic_id, [])
+
+        def _ts(value: Any) -> datetime:
+            if isinstance(value, (int, float)):
+                return dt_util.utc_from_timestamp(value)
+            return value
+
+        last_cost = await recorder.async_add_executor_job(
+            get_last_statistics, self.hass, 1, cost_id, True, {"start", "sum"}
+        )
+        # Default: a full computation from the first energy hour
+        recompute_from = REGISTRY_HISTORY_START
+        cost_sum = 0.0
+        if last_cost and cost_id in last_cost:
+            last_start = _ts(last_cost[cost_id][0]["start"])
+            period_index = max(0, len(periods) - COST_RECOMPUTE_PERIODS)
+            recompute_from = min(
+                last_start + timedelta(hours=1),
+                periods[period_index][0].replace(minute=0, second=0, microsecond=0),
+            )
+            window_start = recompute_from - timedelta(days=40)
+            previous = [
+                row
+                for row in await recorder.async_add_executor_job(
+                    _stats, cost_id, window_start
+                )
+                if _ts(row["start"]) < recompute_from
+            ]
+            if previous:
+                cost_sum = previous[-1]["sum"] or 0.0
+            else:
+                # No cost row shortly before the recompute point: start over
+                recompute_from = REGISTRY_HISTORY_START
+
+        # Fetch one extra earlier window so the first recomputed hour has a
+        # predecessor to diff its cumulative energy sum against.
+        fetch_from = (
+            recompute_from
+            if recompute_from == REGISTRY_HISTORY_START
+            else recompute_from - timedelta(days=40)
+        )
+        energy_rows = await recorder.async_add_executor_job(
+            _stats, energy_id, fetch_from
+        )
+        if recompute_from != REGISTRY_HISTORY_START and not any(
+            _ts(row["start"]) < recompute_from for row in energy_rows
+        ):
+            # Without an earlier energy row the first hour's change can't be
+            # derived from the cumulative sum — recompute everything instead.
+            recompute_from = REGISTRY_HISTORY_START
+            cost_sum = 0.0
+            energy_rows = await recorder.async_add_executor_job(
+                _stats, energy_id, recompute_from
+            )
+
+        stats = []
+        previous_sum = 0.0
+        for row in energy_rows:
+            start = _ts(row["start"])
+            energy_sum = row["sum"] or 0.0
+            change = energy_sum - previous_sum
+            previous_sum = energy_sum
+            if start < recompute_from:
+                continue
+            cost_sum += change * self._blended_price(periods, start, price_vt, price_nt)
+            stats.append({"start": start, "sum": round(cost_sum, 6)})
+
+        if not stats:
+            return
+        metadata = {
+            "has_sum": True,
+            "mean_type": StatisticMeanType.NONE,
+            "name": name,
+            "source": DOMAIN,
+            "statistic_id": cost_id,
+            "unit_of_measurement": CURRENCY,
+            "unit_class": None,
+        }
+        async_add_external_statistics(self.hass, metadata, stats)
+        _LOGGER.debug(
+            "Imported %d hourly cost statistics for %s from %s",
+            len(stats),
+            cost_id,
+            recompute_from,
+        )
 
     async def _discover_pods(self) -> None:
         """Discover points of delivery."""

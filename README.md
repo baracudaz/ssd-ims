@@ -59,6 +59,7 @@ The integration imports energy data into Home Assistant's statistics database wi
 | `ssd_ims:<pod_name>_consumption_nt` | Low tariff (NT) consumption, monthly (kWh) |
 | `ssd_ims:<pod_name>_cost_vt` | High tariff cost, monthly (EUR) — only when a VT price is set |
 | `ssd_ims:<pod_name>_cost_nt` | Low tariff cost, monthly (EUR) — only when an NT price is set |
+| `ssd_ims:<pod_name>_actual_consumption_cost` | Hourly cost of `actual_consumption` (EUR) — only when both prices are set |
 
 The VT/NT statistics are the differences between consecutive register readings. Each month's value is placed in the last hour of that month (a reading at 00:00 on 1 December closes November), so the Energy dashboard's month and year views show the correct split, while day/hour views show it as a single block at the end of the month. On first setup the full register history available on the portal is imported (back to the meter's installation); the first reading only serves as the baseline. No difference is computed across a meter replacement.
 
@@ -126,17 +127,15 @@ To add SSD IMS data to your Energy dashboard:
 4. Search for `ssd_ims:<pod_name>_actual_consumption`, using the friendly name you assigned the POD during setup
 5. (Optional) Add supply data similarly for solar production tracking
 
-### Alternative: tariff split with costs (VT/NT)
+### Costs
 
-Home Assistant only applies a price configured in the Energy dashboard to statistics backed by an entity — not to imported (external) statistics like these. To see costs, set the VT/NT prices in the integration's options and use the imported cost statistics:
+Home Assistant only applies a price configured in the Energy dashboard to statistics backed by an entity — not to imported (external) statistics like these. Instead, set the VT/NT prices in the integration's options; the integration then imports its own cost statistics, which you select under **Use an entity tracking the total costs**. Prices and costs are always in EUR, and the Energy dashboard labels costs with Home Assistant's own currency, so set **Settings** → **System** → **General** → **Currency** to EUR.
 
-1. Click **Add Consumption** and select `ssd_ims:<pod_name>_consumption_vt`
-2. Under cost, choose **Use an entity tracking the total costs** and select `ssd_ims:<pod_name>_cost_vt`
-3. Repeat with `ssd_ims:<pod_name>_consumption_nt` / `ssd_ims:<pod_name>_cost_nt`
+**Recommended — hourly consumption with costs:** add `ssd_ims:<pod_name>_actual_consumption` with cost `ssd_ims:<pod_name>_actual_consumption_cost`. Day, week, month and year views all work. Each hour's cost is its kWh × the blended price of its register period, weighted by that period's VT/NT mix from the meter registers — so costs are exact per month, while the per-hour split is an average (the portal doesn't publish when HDO switched tariffs). Hours after the latest register reading (the current month) are priced with the previous period's mix and corrected automatically once the closing reading is published. Costs only exist for hours whose consumption was imported (see *Days to Import*).
 
-Prices and costs are always in EUR. The Energy dashboard labels costs with Home Assistant's own currency, so set **Settings** → **System** → **General** → **Currency** to EUR.
+**Alternative — monthly VT/NT split:** add `ssd_ims:<pod_name>_consumption_vt` with cost `ssd_ims:<pod_name>_cost_vt`, and `ssd_ims:<pod_name>_consumption_nt` with cost `ssd_ims:<pod_name>_cost_nt`. Shows the real VT/NT split per month, but day and week views stay empty because the registers are only read monthly.
 
-**Use either `actual_consumption` or the VT + NT pair, not both** — they measure the same energy, so adding both double-counts it. `actual_consumption` gives an hourly timeline; VT/NT gives a correct monthly tariff split and cost.
+**Use one of the two, not both** — they measure the same energy, so adding both double-counts it. The VT/NT statistics can still be shown outside the Energy dashboard, e.g. in a *Statistics graph* card with the *month* period.
 
 ## Development
 

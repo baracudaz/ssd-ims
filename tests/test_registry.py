@@ -205,6 +205,7 @@ def _make_coordinator(api_client, config, data=None):
     coordinator._stats_lock = asyncio.Lock()
     coordinator._registry_lock = asyncio.Lock()
     coordinator._last_registry_fetch_date = None
+    coordinator._registry_readings = {}
     coordinator.data = data
     return coordinator
 
@@ -387,3 +388,77 @@ class TestRegistryImport:
         await coordinator.update_config({CONF_PRICE_VT: 0.3})
 
         assert coordinator._last_registry_fetch_date is None
+
+
+class TestBlendedPrice:
+    PERIODS = SsdImsDataCoordinator._register_periods(
+        [
+            _reading(SEP, 10, 100),
+            _reading(OCT, 20, 190),  # Sep: 10 VT / 90 NT -> 10 % VT
+            _reading(NOV, 20, 290),  # Oct: 0 VT / 100 NT -> 0 % VT
+        ]
+    )
+
+    def _price(self, hour_start):
+        return SsdImsDataCoordinator._blended_price(
+            self.PERIODS, hour_start, price_vt=1.0, price_nt=0.0
+        )
+
+    def test_periods_carry_vt_share(self):
+        assert [p[2] for p in self.PERIODS] == [pytest.approx(0.1), 0.0]
+
+    def test_hour_uses_its_periods_mix(self):
+        assert self._price(datetime(2026, 9, 15, 10, tzinfo=UTC)) == pytest.approx(0.1)
+        assert self._price(datetime(2026, 10, 15, 10, tzinfo=UTC)) == 0.0
+
+    def test_hour_closed_by_reading_belongs_to_that_period(self):
+        # 21:00-22:00 UTC on 30 Sep ends exactly at the 1 Oct 00:00 reading
+        assert self._price(datetime(2026, 9, 30, 21, tzinfo=UTC)) == pytest.approx(0.1)
+        assert self._price(datetime(2026, 9, 30, 22, tzinfo=UTC)) == 0.0
+
+    def test_hours_outside_known_periods_use_nearest_mix(self):
+        assert self._price(datetime(2026, 11, 5, 10, tzinfo=UTC)) == 0.0
+        assert self._price(datetime(2026, 8, 1, 10, tzinfo=UTC)) == pytest.approx(0.1)
+
+    def test_period_without_consumption_falls_back_to_earlier_mix(self):
+        periods = SsdImsDataCoordinator._register_periods(
+            [_reading(SEP, 10, 100), _reading(OCT, 20, 190), _reading(NOV, 20, 190)]
+        )
+        assert periods[1][2] is None
+        price = SsdImsDataCoordinator._blended_price(
+            periods, datetime(2026, 10, 15, tzinfo=UTC), 1.0, 0.0
+        )
+        assert price == pytest.approx(0.1)
+
+    def test_meter_replacement_period_is_skipped(self):
+        periods = SsdImsDataCoordinator._register_periods(
+            [_reading(SEP, 10, 100), _reading(OCT, 1, 5, serial="M2")]
+        )
+        assert periods == []
+
+
+class TestHourlyCostStartupGuard:
+    async def test_first_refresh_never_waits_for_the_recorder(self):
+        """Waiting for the recorder during the setup refresh deadlocks Home
+        Assistant's startup (the recorder only commits once startup is done)."""
+        coordinator = _make_coordinator(
+            MagicMock(), {CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.1}, data=None
+        )
+        with patch(
+            "custom_components.ssd_ims.coordinator.get_instance"
+        ) as mock_get_instance:
+            await coordinator._update_hourly_costs([POD_ID])
+        mock_get_instance.assert_not_called()
+
+    async def test_not_running_yet_never_waits_for_the_recorder(self):
+        from homeassistant.core import CoreState
+
+        coordinator = _make_coordinator(
+            MagicMock(), {CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.1}, data={}
+        )
+        coordinator.hass.state = CoreState.starting
+        with patch(
+            "custom_components.ssd_ims.coordinator.get_instance"
+        ) as mock_get_instance:
+            await coordinator._update_hourly_costs([POD_ID])
+        mock_get_instance.assert_not_called()

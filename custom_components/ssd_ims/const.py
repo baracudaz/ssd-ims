@@ -73,6 +73,15 @@ REGISTER_STAT_CONSUMPTION_NT: Final = "consumption_nt"
 REGISTER_STAT_COST_VT: Final = "cost_vt"
 REGISTER_STAT_COST_NT: Final = "cost_nt"
 
+# Hourly cost for the hourly actual_consumption statistic: each hour's kWh x
+# the blended price of its register period (VT/NT mix from the registers).
+STAT_ACTUAL_CONSUMPTION_COST: Final = "actual_consumption_cost"
+# Hours after the latest register reading are priced provisionally with the
+# previous period's mix. Each run recomputes the costs from this many
+# register periods back, so they're corrected once the closing reading
+# (and any ad-hoc reading in between) is published.
+COST_RECOMPUTE_PERIODS: Final = 3
+
 # Sensor types
 SENSOR_TYPE_ACTUAL_CONSUMPTION: Final = "actual_consumption"
 SENSOR_TYPE_ACTUAL_SUPPLY: Final = "actual_supply"
