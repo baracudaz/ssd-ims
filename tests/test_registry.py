@@ -316,6 +316,22 @@ class TestRegistryImport:
         # Always requests the full history, so the first import is complete.
         assert client.get_registry_data.call_args.args[1] == REGISTRY_HISTORY_START
 
+    async def test_prices_changed_during_the_fetch_are_used(self):
+        """Imported buckets are never repriced, so the import must use the
+        prices that are current once the portal has answered."""
+        coordinator = _make_coordinator(MagicMock(), {CONF_PRICE_VT: 0.25})
+
+        async def fetch(*args):
+            coordinator.config = {CONF_PRICE_VT: 0.5}
+            return READINGS
+
+        coordinator.api_client.get_registry_data = AsyncMock(side_effect=fetch)
+
+        _, mock_add_stats = await _run_registry_update(coordinator)
+
+        cost_vt = _imported(mock_add_stats)[f"ssd_ims:{POD_ID.lower()}_cost_vt"]
+        assert [s["sum"] for s in cost_vt] == [5.0, 7.5]
+
     async def test_no_cost_statistics_without_prices(self):
         client = MagicMock()
         client.get_registry_data = AsyncMock(return_value=READINGS)

@@ -571,8 +571,6 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
         async with self._registry_lock:
             now = dt_util.now()
-            price_vt = self.config.get(CONF_PRICE_VT)
-            price_nt = self.config.get(CONF_PRICE_NT)
             all_ok = True
 
             for pod_id in pod_ids:
@@ -588,6 +586,12 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     if not readings:
                         continue
                     self._registry_readings[pod_id] = readings
+                    # Read the prices only now: the options may have changed
+                    # while the request above was in flight, and the buckets
+                    # imported below are never repriced later.
+                    price_vt = self.config.get(CONF_PRICE_VT)
+                    price_nt = self.config.get(CONF_PRICE_NT)
+
                     for attr, energy_key, cost_key, label, price in (
                         (
                             "consumption_tariff1",
