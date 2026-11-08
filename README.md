@@ -85,6 +85,20 @@ These statistics can be used directly in the Energy dashboard configuration.
 3. Restart Home Assistant
 4. Add the integration via the UI
 
+### Upgrading to 2.3.0
+
+The update needs no action and keeps all existing statistics, sensors and settings. After the restart the integration adds the tariff register sensors and imports the `consumption_vt` / `consumption_nt` statistics with the full register history on its own.
+
+To see costs in the Energy dashboard:
+
+1. Enter your tariff prices in the integration's options (see [Options Flow](#options-flow)) — VT only for single-rate tariffs (D1/D2).
+2. In the Energy dashboard settings, edit the grid consumption `ssd_ims:<pod_name>_actual_consumption` and choose **Use an entity tracking the total costs** → `ssd_ims:<pod_name>_actual_consumption_cost`. The costs for all imported consumption are computed within a minute of saving the prices.
+
+Keep in mind:
+
+- **Don't also add the VT/NT statistics** to the Energy dashboard — they measure the same energy as `actual_consumption`, so it would be counted twice (see [Costs](#costs)).
+- **All history is priced at the current price.** Earlier years had different prices, so older costs are only an approximation.
+
 ## Configuration
 
 ### Setup Flow
