@@ -1,223 +1,180 @@
-# Home Assistant Integration for Stredoslovenská distribučná (SSD IMS)
+# Integrácia Stredoslovenskej distribučnej (SSD IMS) pre Home Assistant
 
-A custom HA integration for gathering energy consumption and supply data from the Portál energetických dát <https://ims.ssd.sk> with automatic import into Home Assistant's long-term statistics for use in the Energy dashboard.
+*English: a Home Assistant integration for the SSD energy data portal (ims.ssd.sk). User documentation is in Slovak; developer documentation is in English in [DEVELOPMENT.md](DEVELOPMENT.md).*
 
-![Energy dashboard usage](artifacts/screenshots/energy-usage.png)
+Integrácia sťahuje údaje o spotrebe a dodávke elektriny z Portálu energetických dát <https://ims.ssd.sk> a automaticky ich ukladá do dlhodobých štatistík Home Assistantu, odkiaľ ich zobrazí panel Energie.
 
-## Features
+![Panel Energie](artifacts/screenshots/energy-usage.png)
 
-- **Energy Statistics Import**: Automatically imports historical and daily energy data into Home Assistant's statistics database
-- **Energy Dashboard Ready**: Data is formatted for direct use in Home Assistant's Energy dashboard
-- **Tariff Register Readings (VT/NT)**: Imports the meter's monthly high/low tariff register readings and peak demand, with optional cost statistics computed from your tariff prices
-- **Multiple POD Support**: Monitor multiple Points of Delivery simultaneously
-- **Custom POD Names**: Set friendly names for your Points of Delivery (e.g., home address, apartment name)
-- **Historical Data Import**: Import past energy data during initial setup (configurable, up to 365 days)
-- **Automatic Updates**: Configurable update interval (6, 12, or 24 hours recommended)
-- **Re-authentication Flow**: When credentials expire, Home Assistant prompts you to re-enter them without removing the integration
-- **Reconfigure Flow**: Update your Points of Delivery selection and names at any time via the "Reconfigure" option
-- **Diagnostics Support**: Download integration diagnostics (credentials automatically redacted) to help with troubleshooting
-- **Robust Error Handling**: Comprehensive error handling with automatic re-authentication
+## Funkcie
 
-## Data Characteristics
+- **Import štatistík**: historické aj denné údaje sa automaticky ukladajú do databázy štatistík Home Assistantu
+- **Pripravené pre panel Energie**: údaje sa dajú priamo použiť v paneli Energie
+- **Registre VT/NT**: mesačné stavy registrov vysokej a nízkej tarify a maximálny výkon z elektromera, voliteľne aj náklady podľa vašich cien
+- **Viac odberných miest**: sledovanie viacerých odberných miest naraz
+- **Vlastné názvy odberných miest**: napr. adresa alebo názov bytu
+- **Import histórie**: pri nastavení sa dajú načítať údaje až 365 dní dozadu
+- **Automatické aktualizácie**: nastaviteľný interval (6, 12 alebo 24 hodín)
+- **Opätovné prihlásenie**: keď prihlasovacie údaje prestanú platiť, Home Assistant vás vyzve na ich zadanie bez odstránenia integrácie
+- **Rekonfigurácia**: výber a názvy odberných miest zmeníte kedykoľvek cez **Rekonfigurácia**
+- **Diagnostika**: diagnostické údaje na riešenie problémov (bez prihlasovacích údajov a čísel odberných miest)
 
-**Data Freshness**: The Portál energetických dát provides day-old data that is published after midnight:
+## Aké údaje sú k dispozícii
 
-- Data for the current day is not available
-- The most recent data available is from yesterday
-- Data is updated once daily after midnight
+**Aktuálnosť**: portál zverejňuje údaje raz denne po polnoci:
 
-**Data Resolution**: All metering data has 15-minute resolution from the source, aggregated to hourly statistics for Home Assistant.
+- údaje za aktuálny deň nie sú k dispozícii,
+- najnovšie údaje sú za včerajšok.
 
-**Tariff Registers**: The meter's tariff registers (1.8.1 = VT/high tariff, 1.8.2 = NT/low tariff, 1.6.0 = peak demand) come from the portal's *Registrové údaje* page. They are cumulative counters read **once a month** (00:00 on the 1st, plus occasional ad-hoc readings), so the VT/NT split is only available per month — the 15-minute profile has no tariff split, and the portal doesn't publish HDO switching times.
+**Rozlíšenie**: portál meria v 15-minútových intervaloch, integrácia ich sčíta na hodinové štatistiky.
 
-## Sensors Created
+**Registre**: registre elektromera (1.8.1 = VT, vysoká tarifa; 1.8.2 = NT, nízka tarifa; 1.6.0 = maximálny štvrťhodinový výkon) pochádzajú zo stránky portálu *Registrové údaje*. Sú to priebežné stavy počítadiel, odčítané **raz mesačne** (o 00:00 prvého dňa v mesiaci, občas aj mimo poradia). Rozdelenie spotreby na VT a NT je preto známe len po mesiacoch. 15-minútový profil rozdelenie na tarify neobsahuje a portál nezverejňuje ani časy prepínania HDO.
 
-The integration creates **8 sensors per Point of Delivery**:
+## Entity
 
-| Sensor | Description |
-|--------|-------------|
-| `sensor.<pod_name>_actual_consumption_yesterday` | Yesterday's total energy consumption (kWh) |
-| `sensor.<pod_name>_actual_supply_yesterday` | Yesterday's total energy supply/production (kWh) |
-| `sensor.<pod_name>_actual_consumption_total` | Cumulative total consumption from statistics (kWh) |
-| `sensor.<pod_name>_actual_supply_total` | Cumulative total supply from statistics (kWh) |
-| `sensor.<pod_name>_last_update` | Timestamp of last data update |
-| `sensor.<pod_name>_high_tariff_meter_reading` | Latest monthly VT register reading, 1.8.1 (kWh, cumulative counter) |
-| `sensor.<pod_name>_low_tariff_meter_reading` | Latest monthly NT register reading, 1.8.2 (kWh, cumulative counter) |
-| `sensor.<pod_name>_peak_demand` | Peak quarter-hour demand of the latest reading period, 1.6.0 (kW) |
+Pre každé odberné miesto vznikne **8 entít**:
 
-The register sensors have `reading_time` and `meter_serial_number` attributes.
+| Entita | Popis |
+|--------|-------|
+| `sensor.<pod_name>_actual_consumption_yesterday` | Spotreba za včerajšok (kWh) |
+| `sensor.<pod_name>_actual_supply_yesterday` | Dodávka do siete za včerajšok (kWh) |
+| `sensor.<pod_name>_actual_consumption_total` | Celková spotreba zo štatistík (kWh) |
+| `sensor.<pod_name>_actual_supply_total` | Celková dodávka zo štatistík (kWh) |
+| `sensor.<pod_name>_last_update` | Čas poslednej aktualizácie |
+| `sensor.<pod_name>_high_tariff_meter_reading` | Posledný mesačný stav registra VT, 1.8.1 (kWh) |
+| `sensor.<pod_name>_low_tariff_meter_reading` | Posledný mesačný stav registra NT, 1.8.2 (kWh) |
+| `sensor.<pod_name>_peak_demand` | Maximálny štvrťhodinový výkon za posledné obdobie, 1.6.0 (kW) |
 
-## Long-Term Statistics
+Entity registrov majú atribúty `reading_time` (čas odpočtu) a `meter_serial_number` (výrobné číslo elektromera).
 
-The integration imports energy data into Home Assistant's statistics database with hourly granularity:
+## Dlhodobé štatistiky
 
-| Statistic ID | Description |
-|--------------|-------------|
-| `ssd_ims:<pod_name>_actual_consumption` | Cumulative energy consumption (kWh) |
-| `ssd_ims:<pod_name>_actual_supply` | Cumulative energy supply/production (kWh) |
-| `ssd_ims:<pod_name>_consumption_vt` | High tariff (VT) consumption, monthly (kWh) |
-| `ssd_ims:<pod_name>_consumption_nt` | Low tariff (NT) consumption, monthly (kWh) |
-| `ssd_ims:<pod_name>_cost_vt` | High tariff cost, monthly (EUR) — only when a VT price is set |
-| `ssd_ims:<pod_name>_cost_nt` | Low tariff cost, monthly (EUR) — only when an NT price is set |
-| `ssd_ims:<pod_name>_actual_consumption_cost` | Hourly cost of `actual_consumption` (EUR) — only when a VT price is set (NT defaults to the VT price) |
+Integrácia ukladá údaje do štatistík Home Assistantu po hodinách:
 
-The VT/NT statistics are the differences between consecutive register readings. Each month's value is placed in the last hour of that month (a reading at 00:00 on 1 December closes November), so the Energy dashboard's month and year views show the correct split, while day/hour views show it as a single block at the end of the month. On first setup the full register history available on the portal is imported (back to the meter's installation); the first reading only serves as the baseline. No difference is computed across a meter replacement.
+| ID štatistiky | Popis |
+|---------------|-------|
+| `ssd_ims:<pod_name>_actual_consumption` | Spotreba, kumulatívne (kWh) |
+| `ssd_ims:<pod_name>_actual_supply` | Dodávka do siete, kumulatívne (kWh) |
+| `ssd_ims:<pod_name>_consumption_vt` | Spotreba vo vysokej tarife, po mesiacoch (kWh) |
+| `ssd_ims:<pod_name>_consumption_nt` | Spotreba v nízkej tarife, po mesiacoch (kWh) |
+| `ssd_ims:<pod_name>_cost_vt` | Náklady vo vysokej tarife, po mesiacoch (EUR) — len ak je zadaná cena VT |
+| `ssd_ims:<pod_name>_cost_nt` | Náklady v nízkej tarife, po mesiacoch (EUR) — len ak je zadaná cena NT |
+| `ssd_ims:<pod_name>_actual_consumption_cost` | Hodinové náklady pre `actual_consumption` (EUR) — len ak je zadaná cena VT (bez ceny NT sa použije cena VT) |
 
-`<pod_name>` is derived from the friendly name you assign the POD during setup. **Renaming a POD later (via Reconfigure) changes its statistic ID and starts a new series** — the previous history isn't carried over. Pick a name you're happy to keep, or expect to reconfigure the Energy dashboard source if you rename it.
+Štatistiky VT/NT sú rozdiely medzi po sebe idúcimi odpočtami registrov. Hodnota za mesiac sa zapíše do poslednej hodiny mesiaca (odpočet o 00:00 1. decembra uzatvára november), takže mesačný a ročný pohľad v paneli Energie ukazujú správne rozdelenie a denný či hodinový pohľad ho ukáže ako jeden blok na konci mesiaca. Pri prvom nastavení sa načíta celá história registrov, ktorú portál má (až po montáž elektromera); prvý odpočet slúži len ako východisková hodnota. Cez výmenu elektromera sa rozdiel nepočíta.
 
-These statistics can be used directly in the Energy dashboard configuration.
+`<pod_name>` vychádza z názvu, ktorý odbernému miestu dáte pri nastavení. **Ak odberné miesto neskôr premenujete (cez Rekonfigurácia), zmení sa ID jeho štatistík a začne sa nová séria** — doterajšia história sa neprenesie. Zvoľte názov, ktorý chcete ponechať, alebo po premenovaní upravte zdroj v nastaveniach panela Energie.
 
-## Installation
+## Inštalácia
 
-### Method 1: Marketplace (Recommended, Home Assistant 2026.11+)
+### Spôsob 1: Marketplace (odporúčané, Home Assistant 2026.11 a novší)
 
-Since Home Assistant 2026.11, HACS is built in as the **Marketplace**.
+Od verzie 2026.11 je HACS súčasťou Home Assistantu ako **Marketplace**.
 
-1. Go to **Settings** → **Marketplace** (the first time, accept the warning shown there)
-2. Search for "Stredoslovenská distribučná (SSD IMS)" and open it
-3. Select **Install**, check the version and select **Install** again
-4. The setup opens right away; if Home Assistant needs a restart first, a Repairs entry offers it
+1. Otvorte **Nastavenia** → **Marketplace** (pri prvom otvorení potvrďte upozornenie)
+2. Vyhľadajte „Stredoslovenská distribučná (SSD IMS)“ a otvorte ju
+3. Zvoľte **Inštalovať**, skontrolujte verziu a znova zvoľte **Inštalovať**
+4. Hneď sa otvorí nastavenie integrácie; ak Home Assistant potrebuje najprv reštart, ponúkne ho v časti **Opravy**
 
-If you installed the integration with HACS before 2026.11, there's nothing to do: on the first start after the update the Marketplace takes over from HACS, and the integration stays installed and keeps getting updates (under **Settings** → **Updates**).
+Ak ste integráciu nainštalovali cez HACS pred verziou 2026.11, nemusíte nič robiť: pri prvom spustení po aktualizácii Marketplace prevezme správu od HACS a integrácia zostane nainštalovaná a bude dostávať aktualizácie (v časti **Nastavenia** → **Aktualizácie**).
 
-### Method 2: HACS (Home Assistant before 2026.11)
+### Spôsob 2: HACS (Home Assistant starší ako 2026.11)
 
-1. Open HACS in Home Assistant
-2. Click on "Integrations"
-3. Click the "+" button
-4. Search for "Stredoslovenská distribučná (SSD IMS)"
-5. Click "Install"
-6. Restart Home Assistant
+1. Otvorte HACS
+2. Zvoľte „Integrations“
+3. Kliknite na tlačidlo „+“
+4. Vyhľadajte „Stredoslovenská distribučná (SSD IMS)“
+5. Zvoľte „Install“
+6. Reštartujte Home Assistant
 
-### Method 3: Manual Installation
+### Spôsob 3: Ručná inštalácia
 
-1. Download this repository
-2. Copy the `custom_components/ssd_ims` folder to your Home Assistant `config/custom_components/` directory
-3. Restart Home Assistant
-4. Add the integration via the UI
+1. Stiahnite tento repozitár
+2. Skopírujte priečinok `custom_components/ssd_ims` do priečinka `config/custom_components/` vo vašom Home Assistante
+3. Reštartujte Home Assistant
+4. Pridajte integráciu (pozri [Nastavenie](#nastavenie))
 
-### Upgrading to 2.3.0
+### Prechod na verziu 2.3.0
 
-The update needs no action and keeps all existing statistics, sensors and settings. After the restart the integration adds the tariff register sensors and imports the `consumption_vt` / `consumption_nt` statistics with the full register history on its own.
+Aktualizácia si nevyžaduje žiadny zásah: všetky doterajšie štatistiky, entity a nastavenia zostanú. Po reštarte integrácia sama pridá entity registrov a načíta štatistiky `consumption_vt` / `consumption_nt` s celou históriou registrov.
 
-To see costs in the Energy dashboard:
+Ak chcete v paneli Energie vidieť aj náklady:
 
-1. Enter your tariff prices in the integration's options (see [Options Flow](#options-flow)) — VT only for single-rate tariffs (D1/D2).
-2. In the Energy dashboard settings, edit the grid consumption `ssd_ims:<pod_name>_actual_consumption` and choose **Use an entity tracking the total costs** → `ssd_ims:<pod_name>_actual_consumption_cost`. The costs for all imported consumption are computed within a minute of saving the prices.
+1. V možnostiach integrácie zadajte ceny (pozri [Ceny a náklady](#ceny-a-náklady)) — pri jednotarifnej sadzbe (D1, D2) stačí cena VT.
+2. V nastaveniach panela Energie upravte pripojenie k sieti so štatistikou `ssd_ims:<pod_name>_actual_consumption` a v časti **Sledovanie nákladov** zvoľte **Použiť entitu sledujúcu celkové náklady** → `ssd_ims:<pod_name>_actual_consumption_cost`. Náklady za celú importovanú spotrebu sa vypočítajú do minúty po uložení cien.
 
-Keep in mind:
+Majte na pamäti:
 
-- **Don't also add the VT/NT statistics** to the Energy dashboard — they measure the same energy as `actual_consumption`, so it would be counted twice (see [Costs](#costs)).
-- **All history is priced at the current price.** Earlier years had different prices, so older costs are only an approximation.
+- **Nepridávajte do panela Energie aj štatistiky VT/NT** — merajú tú istú energiu ako `actual_consumption`, takže by sa započítala dvakrát.
+- **Celá história sa ocení aktuálnou cenou.** V minulých rokoch boli ceny iné, takže staršie náklady sú len orientačné.
 
-## Configuration
+## Nastavenie
 
-### Setup Flow
+1. Otvorte **Nastavenia** → **Zariadenia a služby**
+2. Zvoľte **Pridať integráciu**
+3. Vyhľadajte „Stredoslovenská distribučná (SSD IMS)“
+4. **Krok 1 – prihlásenie**: zadajte prihlasovacie údaje do portálu <https://ims.ssd.sk>
+5. **Krok 2 – odberné miesta**: vyberte odberné miesta, ktoré chcete sledovať
+6. **Krok 3 – názvy**: zadajte vlastné názvy odberných miest (nepovinné, napr. adresa)
+7. **Krok 4 – import a aktualizácie**: nastavte interval aktualizácie a import histórie
 
-1. Go to **Settings** → **Devices & Services**
-2. Click **Add Integration**
-3. Search for "Stredoslovenská distribučná (SSD IMS)"
-4. **Step 1 - Credentials**: Enter your SSD IMS portal credentials (<https://ims.ssd.sk>)
-5. **Step 2 - POD Selection**: Select which Points of Delivery to monitor
-6. **Step 3 - POD Names**: Set friendly names for your PODs (optional, e.g., your home address)
-7. **Step 4 - Data Import & Refresh**: Configure update interval and historical data import
+| Nastavenie | Predvolené | Popis |
+|------------|------------|-------|
+| Interval aktualizácie | 6 hodín | Ako často sa majú kontrolovať nové údaje (6, 12 alebo 24 hodín) |
+| Import histórie | Áno | Pri prvom nastavení načítať aj staršie údaje |
+| Počet dní | 7 | Koľko dní dozadu načítať (1 – 365) |
 
-### Configuration Options
+### Možnosti
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| Update Interval | 6 hours | How often to check for new data (6h, 12h, or 24h recommended) |
-| Enable History Import | Yes | Import historical energy data on first setup |
-| Days to Import | 7 | Number of days of historical data to import (1-365) |
+Po nastavení môžete tieto položky zmeniť v **Nastavenia** → **Zariadenia a služby** → **Stredoslovenská distribučná (SSD IMS)** → **Konfigurovať**:
 
-### Options Flow
+| Možnosť | Popis |
+|---------|-------|
+| Interval aktualizácie | Ako často sa majú kontrolovať nové údaje |
+| Cena vo vysokej tarife (VT) | Nepovinné. Koncová cena za 1 kWh v EUR vrátane DPH a všetkých poplatkov — zapne hodinové náklady `actual_consumption_cost` a mesačné `cost_vt` |
+| Cena v nízkej tarife (NT) | Nepovinné. To isté pre NT — zapne mesačné `cost_nt`. Pri jednotarifnej sadzbe (D1, D2) nechajte prázdne, celá spotreba sa vypočíta s cenou VT |
 
-After setup, you can change these via **Settings** → **Devices & Services** → **Stredoslovenská distribučná (SSD IMS)** → **Configure**:
+## Ceny a náklady
 
-| Option | Description |
-|--------|-------------|
-| Update Interval | How often to check for new data |
-| High tariff (VT) price | Optional. Final price in EUR per kWh incl. VAT and all per-kWh fees — enables the hourly `actual_consumption_cost` and the monthly `cost_vt` statistics |
-| Low tariff (NT) price | Optional. Same for NT — enables the monthly `cost_nt` statistic. Leave empty for single-rate tariffs (D1/D2): the VT price is then used for all consumption |
+**Kde nájdete ceny:** na faktúre od dodávateľa (napr. SSE ich uvádza pod nadpisom *Aktuálne koncové ceny elektriny platné pre Vašu sadzbu*). Použite tieto koncové ceny a nesčítavajte položky faktúry sami — koncová cena už obsahuje silovú elektrinu, distribúciu, straty, regulované poplatky za kWh (tarifa za prevádzkovanie systému TPS, tarifa za systémové služby TSS, odvod do Národného jadrového fondu NJF) aj DPH, ktoré sa pri ručnom sčítaní ľahko vynechajú. Mesačné poplatky (platba dodávateľovi, distribúcia podľa ističa) sa v paneli Energie zobraziť nedajú a nie sú zahrnuté.
 
-Your supplier invoice usually lists these final prices (e.g. SSE prints them as *Aktuálne koncové ceny elektriny platné pre Vašu sadzbu*). Use those rather than adding up the invoice's line items yourself — the final price already contains supply, distribution, losses and the per-kWh regulated fees (system operation TPS, system services TSS, nuclear fund levy NJF) plus VAT, which are easy to leave out of a manual sum. Fixed monthly fees (supplier fee, distribution fee by breaker size) can't be represented in the Energy dashboard and are not included. Saving the options applies the prices right away. The first import prices all history at the current price. After a price change, the monthly `cost_vt` / `cost_nt` keep the old price for months already imported, while the hourly `actual_consumption_cost` is recalculated with the new price for the last three register periods (roughly the last two months plus the current one); older hours keep the old price.
+**Prečo ceny v integrácii:** Home Assistant uplatní cenu nastavenú v paneli Energie len na štatistiky entít, nie na importované (externé) štatistiky, aké vytvára táto integrácia. Integrácia preto počíta vlastné štatistiky nákladov, ktoré zvolíte cez **Použiť entitu sledujúcu celkové náklady**. Ceny aj náklady sú vždy v eurách a panel Energie ich označí menou Home Assistantu, preto si v nastaveniach domácnosti (**Mena**) nastavte EUR.
 
-## Energy Dashboard Setup
+**Zmena cien:** uložením možností sa ceny uplatnia hneď. Prvý import ocení celú históriu aktuálnou cenou. Po zmene ceny si mesačné `cost_vt` / `cost_nt` ponechajú pôvodnú cenu pre už importované mesiace, kým hodinové `actual_consumption_cost` sa prepočítajú novou cenou za posledné tri obdobia registrov (zhruba posledné dva mesiace a aktuálny mesiac); staršie hodiny si ponechajú pôvodnú cenu.
 
-To add SSD IMS data to your Energy dashboard:
+## Panel Energie
 
-1. Go to **Settings** → **Dashboards** → **Energy**
-2. Click **Add Consumption** under "Electricity grid"
-3. Select "Use an external statistic"
-4. Search for `ssd_ims:<pod_name>_actual_consumption`, using the friendly name you assigned the POD during setup
-5. (Optional) Add supply data similarly for solar production tracking
+1. Otvorte nastavenia panela Energie (**Nastavenia** → **Panely** → **Energie**, prípadne adresa `/config/energy`)
+2. V časti **Elektrická sieť** zvoľte **Pridať sieťové pripojenie**
+3. V poli **Energia dovážaná zo siete** vyhľadajte `ssd_ims:<pod_name>_actual_consumption` (podľa názvu, ktorý ste odbernému miestu dali pri nastavení)
+4. Ak dodávate elektrinu do siete (napr. z fotovoltiky), v poli **Energia vyvážaná do siete** zvoľte `ssd_ims:<pod_name>_actual_supply`
+5. Ak chcete náklady, v časti **Sledovanie nákladov** zvoľte **Použiť entitu sledujúcu celkové náklady** a štatistiku nákladov (pozri nižšie)
 
-### Costs
+**Odporúčané — hodinová spotreba s nákladmi:** `ssd_ims:<pod_name>_actual_consumption` s nákladmi `ssd_ims:<pod_name>_actual_consumption_cost`. Fungujú denné, týždenné, mesačné aj ročné pohľady. Náklady každej hodiny sú jej kWh × priemerná cena obdobia registrov, vážená pomerom VT/NT v tomto období — mesačné náklady sú teda presné, rozdelenie na hodiny je priemer (portál nezverejňuje, kedy HDO prepínalo tarify). Hodiny po poslednom odpočte (aktuálny mesiac) sa ocenia pomerom predchádzajúceho obdobia a po zverejnení odpočtu sa automaticky opravia. Náklady existujú len pre hodiny, ktorých spotreba bola importovaná (pozri *Počet dní*).
 
-Home Assistant only applies a price configured in the Energy dashboard to statistics backed by an entity — not to imported (external) statistics like these. Instead, set the VT/NT prices in the integration's options; the integration then imports its own cost statistics, which you select under **Use an entity tracking the total costs**. Prices and costs are always in EUR, and the Energy dashboard labels costs with Home Assistant's own currency, so set **Settings** → **System** → **General** → **Currency** to EUR.
+**Alternatíva — mesačné rozdelenie VT/NT:** `ssd_ims:<pod_name>_consumption_vt` s nákladmi `ssd_ims:<pod_name>_cost_vt` a `ssd_ims:<pod_name>_consumption_nt` s nákladmi `ssd_ims:<pod_name>_cost_nt`. Ukazuje skutočné rozdelenie VT/NT po mesiacoch, ale denné a týždenné pohľady zostanú prázdne, lebo registre sa odčítavajú len raz mesačne.
 
-**Recommended — hourly consumption with costs:** add `ssd_ims:<pod_name>_actual_consumption` with cost `ssd_ims:<pod_name>_actual_consumption_cost`. Day, week, month and year views all work. Each hour's cost is its kWh × the blended price of its register period, weighted by that period's VT/NT mix from the meter registers — so costs are exact per month, while the per-hour split is an average (the portal doesn't publish when HDO switched tariffs). Hours after the latest register reading (the current month) are priced with the previous period's mix and corrected automatically once the closing reading is published. Costs only exist for hours whose consumption was imported (see *Days to Import*).
+**Použite len jednu z možností, nie obe** — merajú tú istú energiu, takže by sa započítala dvakrát. Štatistiky VT/NT si môžete zobraziť mimo panela Energie, napr. v karte **Štatistický graf** s mesačným obdobím.
 
-**Alternative — monthly VT/NT split:** add `ssd_ims:<pod_name>_consumption_vt` with cost `ssd_ims:<pod_name>_cost_vt`, and `ssd_ims:<pod_name>_consumption_nt` with cost `ssd_ims:<pod_name>_cost_nt`. Shows the real VT/NT split per month, but day and week views stay empty because the registers are only read monthly.
+## Riešenie problémov
 
-**Use one of the two, not both** — they measure the same energy, so adding both double-counts it. The VT/NT statistics can still be shown outside the Energy dashboard, e.g. in a *Statistics graph* card with the *month* period.
+1. **Prihlásenie zlyhalo**
+   - Overte meno a heslo na <https://ims.ssd.sk>
+   - Skontrolujte, či je váš účet aktívny
+   - Ak sa prihlasovacie údaje zmenili, Home Assistant vás upozorní a ponúkne opätovné prihlásenie bez odstránenia integrácie
 
-## Development
+2. **Panel Energie neukazuje údaje**
+   - Počkajte na prvú aktualizáciu (podľa intervalu to môže trvať až 6 hodín)
+   - V protokoloch skontrolujte, či sa import histórie dokončil
+   - Overte, či sú v paneli Energie zvolené správne štatistiky
 
-### Prerequisites
+3. **Chyba certifikátu SSL**
+   - Portál SSD IMS používa SSL; Home Assistant musí vedieť overiť certifikáty
+   - Skontrolujte, či sú certifikáty certifikačných autorít vo vašom systéme aktuálne
 
-- Python 3.14+
-- Docker and Docker Compose
-- Home Assistant itself isn't needed: `make install` puts the version pinned in `requirements.txt` into `.venv`
+### Podrobné protokolovanie
 
-### Setup Development Environment
-
-```bash
-# Clone the repository
-git clone https://github.com/baracudaz/ssd-ims.git
-cd ssd-ims
-
-# Create a .venv and install dependencies (needed for make test/lint/format below)
-make install
-
-# Start Home Assistant container for manual/UI testing
-make docker-up
-
-# View logs
-make docker-logs
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-make test
-
-# Run with coverage
-make test-coverage
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Authentication Failed**
-   - Verify your username and password at <https://ims.ssd.sk>
-   - Ensure your account is active
-   - If credentials have changed, Home Assistant will prompt you to re-enter them via a notification — click **Re-authenticate** to update without removing the integration
-
-2. **No Data in Energy Dashboard**
-   - Wait for the first data update (can take up to 6 hours depending on interval)
-   - Check that historical import completed in the logs
-   - Verify the statistic IDs are correctly configured in the Energy dashboard
-
-3. **SSL Certificate Error**
-   - The SSD IMS portal uses SSL; ensure your Home Assistant can verify certificates
-   - Check your system's CA certificates are up to date
-
-### Debug Logging
-
-Enable debug logging for troubleshooting:
+Pri riešení problémov zapnite podrobné protokolovanie:
 
 ```yaml
 # configuration.yaml
@@ -227,27 +184,16 @@ logger:
     custom_components.ssd_ims: debug
 ```
 
-## API Integration
+Ak problém nahlasujete, pripojte diagnostické údaje (**Nastavenia** → **Zariadenia a služby** → integrácia → ⋮ → **Stiahnuť diagnostické údaje**) — neobsahujú prihlasovacie údaje ani čísla odberných miest.
 
-The integration uses the SSD IMS portal API:
+## Autori
 
-| Endpoint | Purpose |
-|----------|---------|
-| `/api/account/login` | Authentication |
-| `/api/consumption-production/profile-data/get-points-of-delivery` | POD discovery |
-| `/api/consumption-production/profile-data/chart-data` | Energy data retrieval |
+Spravuje [baracudaz](https://github.com/baracudaz). Pôvodne vychádza z projektu [HA-SSD-IMS](https://github.com/samsk/HA-SSD-IMS) od [samsk](https://github.com/samsk).
 
-## Credits
+## Licencia
 
-Maintained by [baracudaz](https://github.com/baracudaz). Originally based on [HA-SSD-IMS](https://github.com/samsk/HA-SSD-IMS) by [samsk](https://github.com/samsk).
+Projekt je licencovaný pod AGPLv3 — podrobnosti v súbore [LICENSE](LICENSE).
 
-## License
+## Prispievanie
 
-This project is licensed under the AGPLv3 License - see the LICENSE file for details.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with tests
-4. Submit a pull request
+Vývoj, testy a postup pri prispievaní sú popísané (v angličtine) v [DEVELOPMENT.md](DEVELOPMENT.md).
