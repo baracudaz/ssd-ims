@@ -157,7 +157,7 @@ Home Assistant only applies a price configured in the Energy dashboard to statis
 
 - Python 3.14+
 - Docker and Docker Compose
-- Home Assistant 2026.10+ (the pinned version is installed into `.venv` by `make install`)
+- Home Assistant itself isn't needed: `make install` puts the version pinned in `requirements.txt` into `.venv`
 
 ### Setup Development Environment
 
