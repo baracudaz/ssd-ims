@@ -13,7 +13,9 @@ from custom_components.ssd_ims.const import (
     REGISTRY_HISTORY_START,
     CONF_POD_NAME_MAPPING,
     CONF_PRICE_NT,
+    CONF_PRICE_NT_ENTITY,
     CONF_PRICE_VT,
+    CONF_PRICE_VT_ENTITY,
 )
 from custom_components.ssd_ims.coordinator import SsdImsDataCoordinator
 from custom_components.ssd_ims.helpers import PriceHistory
@@ -221,14 +223,18 @@ def _make_coordinator(api_client, config, data=None):
     coordinator._registry_lock = asyncio.Lock()
     coordinator._last_registry_fetch_date = None
     coordinator._registry_readings = {}
-    coordinator._supplier_entity_ids = frozenset()
-    coordinator._unsub_supplier = None
+    coordinator._price_entities_watched = frozenset()
+    coordinator._unsub_price_entities = None
     coordinator._reprice_requested = False
-    coordinator._supplier_pod_ids = []
-    coordinator._unsub_supplier_registry = None
     coordinator.data = data
-    # No supplier integration installed unless a test says otherwise
-    coordinator._supplier_prices = MagicMock(return_value=None)
+    return coordinator
+
+
+def _with_states(coordinator, states):
+    """Let hass.states.get return the given entity states."""
+    coordinator.hass.states.get.side_effect = lambda entity_id: (
+        MagicMock(state=states[entity_id]) if entity_id in states else None
+    )
     return coordinator
 
 
@@ -540,94 +546,61 @@ class TestHourlyCostSinglePrice:
         import_costs.assert_not_awaited()
 
 
-class TestSupplierPrices:
-    """Prices from the sse_ezona sensors matched by the POD's EIC."""
+ENTITIES = {CONF_PRICE_VT_ENTITY: "sensor.vt", CONF_PRICE_NT_ENTITY: "sensor.nt"}
 
-    def _coordinator(self, entities, states, config=None):
-        """Coordinator with the given sse_ezona entities and their states."""
-        coordinator = _make_coordinator(MagicMock(), config or {})
-        del coordinator._supplier_prices  # use the real method
-        registry = MagicMock()
-        registry.async_get_entity_id.side_effect = lambda platform, domain, unique_id: (
-            entities.get(unique_id)
-            if (platform, domain) == ("sensor", "sse_ezona")
-            else None
-        )
-        coordinator.hass.states.get.side_effect = lambda entity_id: (
-            MagicMock(state=states[entity_id]) if entity_id in states else None
-        )
-        self._patch = patch(
-            "custom_components.ssd_ims.coordinator.er.async_get",
-            return_value=registry,
-        )
-        self._patch.start()
-        return coordinator
 
-    def teardown_method(self):
-        """Stop the entity registry patch."""
-        if hasattr(self, "_patch"):
-            self._patch.stop()
+class TestPriceEntities:
+    """Prices from entities chosen in the options."""
 
-    def test_two_rate_prices_override_the_options(self):
-        """Supplier prices win over the options."""
-        coordinator = self._coordinator(
-            {
-                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.home_vt",
-                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.home_nt",
-            },
-            {"sensor.home_vt": "0.250211", "sensor.home_nt": "0.137649"},
-            {CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.2},
+    def test_entities_win_over_fixed_prices(self):
+        """A price entity replaces the fixed price of its tariff."""
+        coordinator = _with_states(
+            _make_coordinator(
+                MagicMock(), {CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.2, **ENTITIES}
+            ),
+            {"sensor.vt": "0.250211", "sensor.nt": "0.137649"},
         )
         assert coordinator._pod_prices(POD_ID) == (0.250211, 0.137649)
 
-    def test_single_rate_price_is_the_vt_price(self):
-        """JT is the only price of a single-rate tariff."""
-        coordinator = self._coordinator(
-            {f"ELECTRICITY_{POD_ID}_price_jt": "sensor.home_jt"},
-            {"sensor.home_jt": "0.2"},
+    def test_entity_for_one_tariff_only(self):
+        """The other tariff keeps its fixed price."""
+        coordinator = _with_states(
+            _make_coordinator(
+                MagicMock(),
+                {
+                    CONF_PRICE_VT: 0.3,
+                    CONF_PRICE_NT: 0.2,
+                    CONF_PRICE_VT_ENTITY: "sensor.vt",
+                },
+            ),
+            {"sensor.vt": "0.25"},
+        )
+        assert coordinator._pod_prices(POD_ID) == (0.25, 0.2)
+
+    def test_single_rate_entity(self):
+        """Only a VT entity: single-rate, NT stays empty."""
+        coordinator = _with_states(
+            _make_coordinator(MagicMock(), {CONF_PRICE_VT_ENTITY: "sensor.vt"}),
+            {"sensor.vt": "0.2"},
         )
         assert coordinator._pod_prices(POD_ID) == (0.2, None)
 
-    def test_without_supplier_sensors_the_options_are_used(self):
-        """Sensors of another EIC don't count."""
-        coordinator = self._coordinator(
-            {"ELECTRICITY_OTHER_price_vt": "sensor.other_vt"},
-            {"sensor.other_vt": "0.1"},
-            {CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.2},
-        )
-        assert coordinator._pod_prices(POD_ID) == (0.3, 0.2)
-
-    def test_unavailable_supplier_price_is_no_price(self):
-        """Don't fall back to a possibly stale manual price."""
-        coordinator = self._coordinator(
-            {
-                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.home_vt",
-                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.home_nt",
-            },
-            {"sensor.home_vt": "unavailable", "sensor.home_nt": "0.1"},
-            {CONF_PRICE_VT: 0.3},
+    @pytest.mark.parametrize(
+        "states",
+        [{"sensor.vt": "unavailable", "sensor.nt": "0.1"}, {"sensor.vt": "0.25"}],
+    )
+    def test_entity_without_value_is_no_price(self, states):
+        """No stale fixed price, and night consumption never at the VT price."""
+        coordinator = _with_states(
+            _make_coordinator(MagicMock(), {CONF_PRICE_VT: 0.3, **ENTITIES}), states
         )
         assert coordinator._pod_prices(POD_ID) == (None, None)
 
-    def test_unavailable_nt_price_is_no_price(self):
-        """Night consumption must not be priced at the VT price."""
-        coordinator = self._coordinator(
-            {
-                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.home_vt",
-                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.home_nt",
-            },
-            {"sensor.home_vt": "0.25"},
-        )
-        assert coordinator._pod_prices(POD_ID) == (None, None)
-
-    async def test_supplier_prices_are_used_for_register_costs(self):
-        """Monthly costs use the supplier prices too."""
-        coordinator = self._coordinator(
-            {
-                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.home_vt",
-                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.home_nt",
-            },
-            {"sensor.home_vt": "0.5", "sensor.home_nt": "0.1"},
+    async def test_entity_prices_are_used_for_register_costs(self):
+        """Monthly costs use the entity prices too."""
+        coordinator = _with_states(
+            _make_coordinator(MagicMock(), dict(ENTITIES)),
+            {"sensor.vt": "0.5", "sensor.nt": "0.1"},
         )
         coordinator.api_client.get_registry_data = AsyncMock(return_value=READINGS)
 
@@ -640,29 +613,6 @@ class TestSupplierPrices:
         ]
 
 
-class TestHourlyCostSupplierPrices:
-    async def test_supplier_prices_are_used_without_options(self):
-        """Hourly costs use the supplier prices without any options."""
-        from homeassistant.core import CoreState
-
-        coordinator = _make_coordinator(MagicMock(), {}, data={})
-        coordinator._supplier_prices = MagicMock(return_value=(0.25, 0.14))
-        coordinator.hass.state = CoreState.running
-        coordinator._registry_readings = {POD_ID: READINGS}
-        coordinator._import_hourly_costs = AsyncMock()
-        recorder = MagicMock()
-        recorder.async_block_till_done = AsyncMock()
-        with patch(
-            "custom_components.ssd_ims.coordinator.get_instance",
-            return_value=recorder,
-        ):
-            await coordinator._update_hourly_costs([POD_ID])
-        assert coordinator._import_hourly_costs.await_args.args[-2:] == (
-            PriceHistory(0.25),
-            PriceHistory(0.14),
-        )
-
-
 def _state_event(old, new):
     return MagicMock(
         data={
@@ -672,12 +622,12 @@ def _state_event(old, new):
     )
 
 
-class TestSupplierPriceChanges:
-    """A changed supplier price reprices without new portal requests."""
+class TestPriceEntityChanges:
+    """A changed price entity reprices without new portal requests."""
 
-    def _coordinator(self):
+    def _coordinator(self, config=None):
         """Coordinator whose refresh requests are recorded."""
-        coordinator = _make_coordinator(MagicMock(), {}, data={POD_ID: {}})
+        coordinator = _make_coordinator(MagicMock(), config or {}, data={POD_ID: {}})
         coordinator.async_request_refresh = MagicMock()
         return coordinator
 
@@ -687,7 +637,7 @@ class TestSupplierPriceChanges:
     def test_new_numeric_price_requests_a_reprice(self, old, new):
         """A price that appears or changes requests a repricing refresh."""
         coordinator = self._coordinator()
-        coordinator._async_supplier_price_changed(_state_event(old, new))
+        coordinator._async_price_entity_changed(_state_event(old, new))
         assert coordinator._reprice_requested
         coordinator.hass.async_create_task.assert_called_once()
 
@@ -697,7 +647,7 @@ class TestSupplierPriceChanges:
     def test_no_new_price_requests_nothing(self, old, new):
         """Unchanged or missing prices don't reprice."""
         coordinator = self._coordinator()
-        coordinator._async_supplier_price_changed(_state_event(old, new))
+        coordinator._async_price_entity_changed(_state_event(old, new))
         assert not coordinator._reprice_requested
         coordinator.hass.async_create_task.assert_not_called()
 
@@ -717,8 +667,7 @@ class TestSupplierPriceChanges:
 
     async def test_reprice_imports_register_costs_from_cached_readings(self):
         """Monthly costs skipped while the price was unknown get imported."""
-        coordinator = self._coordinator()
-        coordinator.config = {CONF_PRICE_VT: 0.5, CONF_PRICE_NT: 0.1}
+        coordinator = self._coordinator({CONF_PRICE_VT: 0.5, CONF_PRICE_NT: 0.1})
         coordinator._registry_readings = {POD_ID: READINGS}
         coordinator._update_hourly_costs = AsyncMock()
         with (
@@ -747,96 +696,35 @@ class TestSupplierPriceChanges:
         assert not coordinator._reprice_requested
         coordinator.api_client.get_registry_data.assert_not_called()
 
-    def test_watches_only_the_supplier_sensors_of_configured_pods(self):
-        """Subscribes once per set of sensors, and resubscribes on change."""
-        coordinator = self._coordinator()
-        registry = MagicMock()
-        registry.async_get_entity_id.side_effect = lambda platform, domain, uid: (
-            "sensor.home_vt" if uid == f"ELECTRICITY_{POD_ID}_price_vt" else None
-        )
-        unsub = MagicMock()
-        with (
-            patch(
-                "custom_components.ssd_ims.coordinator.er.async_get",
-                return_value=registry,
-            ),
-            patch(
-                "custom_components.ssd_ims.coordinator.async_track_state_change_event",
-                return_value=unsub,
-            ) as mock_track,
-        ):
-            coordinator._watch_supplier_prices([POD_ID])
-            coordinator._watch_supplier_prices([POD_ID])
-        mock_track.assert_called_once()
-        assert mock_track.call_args.args[1] == ["sensor.home_vt"]
+    def test_watches_the_configured_entities(self):
+        """Subscribes once per set of entities, resubscribes on change."""
+        coordinator = self._coordinator({CONF_PRICE_VT_ENTITY: "sensor.vt"})
+        unsubs = [MagicMock(), MagicMock()]
+        with patch(
+            "custom_components.ssd_ims.coordinator.async_track_state_change_event",
+            side_effect=unsubs,
+        ) as mock_track:
+            coordinator._watch_price_entities()
+            coordinator._watch_price_entities()
+            assert mock_track.call_count == 1
+            assert mock_track.call_args.args[1] == ["sensor.vt"]
 
-        coordinator.async_unwatch_supplier_prices()
-        unsub.assert_called_once()
-        coordinator.hass.bus.async_listen.return_value.assert_called_once()
+            coordinator.config = dict(ENTITIES)
+            coordinator._watch_price_entities()
+            unsubs[0].assert_called_once()
+            assert sorted(mock_track.call_args.args[1]) == ["sensor.nt", "sensor.vt"]
 
-    def _registry_event(self, coordinator, registry, entity_id, *, created):
-        """Deliver a registry event, with the sensor present or not."""
-        with (
-            patch(
-                "custom_components.ssd_ims.coordinator.er.async_get",
-                return_value=registry,
-            ),
-            patch(
-                "custom_components.ssd_ims.coordinator.async_track_state_change_event",
-                return_value=MagicMock(),
-            ) as mock_track,
-        ):
-            uids = {f"ELECTRICITY_{POD_ID}_price_vt": entity_id} if created else {}
-            registry.async_get_entity_id.side_effect = lambda platform, domain, uid: (
-                uids.get(uid)
-            )
-            event = MagicMock()
-            event.data = {"action": "create" if created else "remove"}
-            event.data["entity_id"] = entity_id
-            coordinator._async_supplier_registry_updated(event)
-        return mock_track
+        coordinator.async_unwatch_price_entities()
+        unsubs[1].assert_called_once()
 
-    @pytest.mark.parametrize(("state", "repriced"), [("0.25", True), (None, False)])
-    def test_supplier_sensor_added_later_is_watched(self, state, repriced):
-        """A sensor registered after the day's update is used the same day."""
-        coordinator = self._coordinator()
-        coordinator._supplier_pod_ids = [POD_ID]
-        registry = MagicMock()
-        registry.async_get.return_value = MagicMock(platform="sse_ezona")
-        coordinator.hass.states.get.return_value = (
-            None if state is None else MagicMock(state=state)
-        )
-        mock_track = self._registry_event(
-            coordinator, registry, "sensor.home_vt", created=True
-        )
-        assert mock_track.call_args.args[1] == ["sensor.home_vt"]
-        # Without a value yet, the state listener reprices once it gets one.
-        assert coordinator._reprice_requested is repriced
-
-    def test_other_integrations_entities_are_ignored(self):
-        """Registry events of unrelated entities change nothing."""
-        coordinator = self._coordinator()
-        registry = MagicMock()
-        registry.async_get.return_value = MagicMock(platform="other")
-        mock_track = self._registry_event(
-            coordinator, registry, "sensor.other", created=True
-        )
+    def test_no_entities_watches_nothing(self):
+        """Fixed prices only: nothing to watch."""
+        coordinator = self._coordinator({CONF_PRICE_VT: 0.3})
+        with patch(
+            "custom_components.ssd_ims.coordinator.async_track_state_change_event"
+        ) as mock_track:
+            coordinator._watch_price_entities()
         mock_track.assert_not_called()
-        assert not coordinator._reprice_requested
-
-    def test_removed_supplier_sensor_falls_back_to_options(self):
-        """Removing a watched sensor stops watching it and reprices."""
-        coordinator = self._coordinator()
-        coordinator._supplier_pod_ids = [POD_ID]
-        coordinator._supplier_entity_ids = frozenset({"sensor.home_vt"})
-        old_unsub = MagicMock()
-        coordinator._unsub_supplier = old_unsub
-        registry = MagicMock()
-        registry.async_get.return_value = None
-        self._registry_event(coordinator, registry, "sensor.home_vt", created=False)
-        old_unsub.assert_called_once()
-        assert coordinator._supplier_entity_ids == frozenset()
-        assert coordinator._reprice_requested
 
 
 H0 = datetime(2026, 11, 1, 0, tzinfo=UTC)
@@ -864,24 +752,15 @@ class TestPriceHistory:
         assert history.at(H0 - timedelta(days=60)) == 0.1
 
 
-class TestSupplierPriceHistory:
-    """Supplier prices are read hour by hour from long-term statistics."""
+class TestPriceEntityHistory:
+    """Entity prices are read hour by hour from long-term statistics."""
 
-    async def _histories(self, entities, means, supplier=(0.25, 0.14)):
-        """Run _pod_price_histories with the given registry and statistics."""
-        coordinator = _make_coordinator(MagicMock(), {})
-        coordinator._supplier_prices = MagicMock(return_value=supplier)
-        registry = MagicMock()
-        registry.async_get_entity_id.side_effect = lambda platform, domain, unique_id: (
-            entities.get(unique_id)
-        )
+    async def _histories(self, config, states, means):
+        """Run _pod_price_histories with the given options and statistics."""
+        coordinator = _with_states(_make_coordinator(MagicMock(), config), states)
         recorder = MagicMock()
         recorder.async_add_executor_job = AsyncMock(side_effect=_run_executor)
         with (
-            patch(
-                "custom_components.ssd_ims.coordinator.er.async_get",
-                return_value=registry,
-            ),
             patch(
                 "custom_components.ssd_ims.coordinator.get_instance",
                 return_value=recorder,
@@ -895,12 +774,10 @@ class TestSupplierPriceHistory:
         return result, mock_stats
 
     async def test_two_rate_histories(self):
-        """VT and NT each follow their own sensor's hourly mean."""
+        """VT and NT each follow their own entity's hourly mean."""
         (vt, nt), mock_stats = await self._histories(
-            {
-                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.vt",
-                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.nt",
-            },
+            dict(ENTITIES),
+            {"sensor.vt": "0.25", "sensor.nt": "0.14"},
             {
                 "sensor.vt": [
                     {"start": H0.timestamp(), "mean": 0.3},
@@ -915,31 +792,28 @@ class TestSupplierPriceHistory:
         assert mock_stats.call_args.args[3] == {"sensor.vt", "sensor.nt"}
         assert mock_stats.call_args.args[6] == {"mean"}
 
-    async def test_single_rate_history_is_the_vt_price(self):
-        """JT is read as VT; NT stays empty for single-rate points."""
-        (vt, nt), _ = await self._histories(
-            {f"ELECTRICITY_{POD_ID}_price_jt": "sensor.jt"},
-            {"sensor.jt": [{"start": H0, "mean": 0.2}]},
-            supplier=(0.21, None),
+    async def test_fixed_price_of_the_other_tariff_has_no_history(self):
+        """Only the entity's tariff is read from the statistics."""
+        (vt, nt), mock_stats = await self._histories(
+            {CONF_PRICE_VT_ENTITY: "sensor.vt", CONF_PRICE_NT: 0.1},
+            {"sensor.vt": "0.21"},
+            {"sensor.vt": [{"start": H0, "mean": 0.2}]},
         )
         assert vt.at(H0) == 0.2
         assert vt.current == 0.21
-        assert nt is None
+        assert nt == PriceHistory(0.1)
+        assert mock_stats.call_args.args[3] == {"sensor.vt"}
 
     async def test_without_recorded_history_the_current_price_applies(self):
-        """A just-installed supplier integration has no statistics yet."""
+        """An entity without statistics (e.g. an input_number) is constant."""
         (vt, nt), _ = await self._histories(
-            {
-                f"ELECTRICITY_{POD_ID}_price_vt": "sensor.vt",
-                f"ELECTRICITY_{POD_ID}_price_nt": "sensor.nt",
-            },
-            {},
+            dict(ENTITIES), {"sensor.vt": "0.25", "sensor.nt": "0.14"}, {}
         )
         assert vt == PriceHistory(0.25)
         assert nt == PriceHistory(0.14)
 
-    async def test_options_prices_have_no_history(self):
-        """Without supplier sensors the statistics aren't queried at all."""
+    async def test_fixed_prices_have_no_history(self):
+        """Without entities the statistics aren't queried at all."""
         coordinator = _make_coordinator(
             MagicMock(), {CONF_PRICE_VT: 0.3, CONF_PRICE_NT: 0.1}
         )
