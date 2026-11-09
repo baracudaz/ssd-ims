@@ -339,6 +339,42 @@ async def test_options_flow_saves_tariff_prices(hass: HomeAssistant):
     coordinator.async_request_refresh.assert_awaited_once()
 
 
+async def test_options_flow_saves_price_entities(hass: HomeAssistant):
+    """Any sensor, input_number or number can provide the VT/NT price."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="test_user",
+        data={
+            "username": "test_user",
+            "password": "test_pass",
+            CONF_POINT_OF_DELIVERY: [POD_ID],
+            CONF_POD_NAME_MAPPING: {},
+        },
+    )
+    entry.add_to_hass(hass)
+    coordinator = MagicMock()
+    coordinator.update_config = AsyncMock()
+    coordinator.async_request_refresh = AsyncMock()
+    entry.runtime_data = coordinator
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert set(result["data_schema"].schema) >= {"price_vt_entity", "price_nt_entity"}
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "scan_interval": "360",
+            "price_vt_entity": "sensor.supplier_price_vt",
+            "price_nt_entity": "input_number.price_nt",
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["price_vt_entity"] == "sensor.supplier_price_vt"
+    assert entry.options["price_nt_entity"] == "input_number.price_nt"
+    pushed = coordinator.update_config.call_args.args[0]
+    assert pushed["price_vt_entity"] == "sensor.supplier_price_vt"
+
+
 async def test_options_flow_prices_are_optional(hass: HomeAssistant):
     entry = MockConfigEntry(
         domain=DOMAIN,
