@@ -84,5 +84,11 @@
         "1440": "24 hours"
       }
     }
+  },
+  "issues": {
+    "invoice_mismatch": {
+      "title": "Invoice for {name} doesn't match the meter",
+      "description": "The consumption billed for {period_from} to {period_to} differs from the meter's register readings for that period ({details}). Check the invoice with your supplier. This issue disappears once an invoice matches."
+    }
   }
 }

@@ -84,5 +84,11 @@
         "1440": "24 hodín"
       }
     }
+  },
+  "issues": {
+    "invoice_mismatch": {
+      "title": "Faktúra pre {name} nesedí s elektromerom",
+      "description": "Spotreba vyúčtovaná za obdobie {period_from} až {period_to} sa líši od odpočtov registrov elektromera za to isté obdobie ({details}). Overte faktúru u dodávateľa. Upozornenie zmizne, keď bude faktúra sedieť."
+    }
   }
 }

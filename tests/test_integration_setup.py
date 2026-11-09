@@ -7,13 +7,14 @@ entity-platform validation) that would have caught it. This test closes
 that gap.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN, HomeAssistant
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
+from homeassistant.util import dt as dt_util
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
@@ -395,3 +396,114 @@ async def test_hourly_cost_follows_register_mix_and_is_corrected_later(
     # No prices -> nothing is computed (and nothing breaks).
     coordinator.config = {CONF_POD_NAME_MAPPING: {POD_ID: "Home"}}
     await coordinator._update_hourly_costs([POD_ID])
+
+
+def _billed_state(hass: HomeAssistant, band: str, kwh: float) -> str:
+    """Register and set a supplier billed consumption sensor for POD_ID."""
+    entity_id = (
+        er.async_get(hass)
+        .async_get_or_create(
+            "sensor",
+            "sse_ezona",
+            f"ELECTRICITY_{POD_ID}_billed_consumption_{band}",
+            suggested_object_id=f"billed_{band}",
+        )
+        .entity_id
+    )
+    hass.states.async_set(
+        entity_id,
+        str(kwh),
+        {"period_from": date(2026, 9, 1), "period_to": date(2026, 9, 30)},
+    )
+    return entity_id
+
+
+def _september_readings() -> list[RegistryReading]:
+    """Register readings at local midnight on 1 Sep and 1 Oct."""
+    return [
+        RegistryReading(
+            serial_number="M1",
+            reading_time=dt_util.start_of_local_day(day),
+            consumption_total=vt + nt,
+            consumption_tariff1=vt,
+            consumption_tariff2=nt,
+        )
+        for day, vt, nt in (
+            (date(2026, 9, 1), 10.0, 100.0),
+            (date(2026, 10, 1), 20.0, 210.0),
+        )
+    ]
+
+
+async def _setup_with_readings(hass: HomeAssistant) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        unique_id="test_user",
+        data={
+            "username": "test_user",
+            "password": "test_pass",
+            CONF_POINT_OF_DELIVERY: [POD_ID],
+            CONF_POD_NAME_MAPPING: {POD_ID: "Home"},
+            CONF_HISTORY_DAYS: 1,
+        },
+    )
+    entry.add_to_hass(hass)
+    client = _mock_api_client()
+    client.get_registry_data = AsyncMock(return_value=_september_readings())
+    with patch("custom_components.ssd_ims.SsdImsApiClient", return_value=client):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry
+
+
+async def test_invoice_check_against_register_readings(hass: HomeAssistant):
+    """The billed kWh are checked against the registers; a mismatch raises
+    a repair issue that goes away once the invoice matches."""
+    billed_vt = _billed_state(hass, "vt", 10)
+    _billed_state(hass, "nt", 110)
+    await _setup_with_readings(hass)
+
+    state = hass.states.get("sensor.home_invoice_check")
+    assert state is not None
+    assert float(state.state) == 0
+    assert state.attributes["status"] == "ok"
+    assert state.attributes["period_from"] == "2026-09-01"
+    assert state.attributes["metered_nt"] == 110
+    issue_id = f"invoice_mismatch_{POD_ID}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+    hass.states.async_set(
+        billed_vt,
+        "15",
+        {"period_from": "2026-09-01", "period_to": "2026-09-30"},
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("sensor.home_invoice_check")
+    assert state.attributes["status"] == "mismatch"
+    assert float(state.state) == 5
+    assert state.attributes["difference_vt_pct"] == 50
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_key == "invoice_mismatch"
+
+    hass.states.async_set(
+        billed_vt,
+        "10",
+        {"period_from": "2026-09-01", "period_to": "2026-09-30"},
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.home_invoice_check").attributes["status"] == "ok"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_invoice_check_added_with_the_supplier_sensors(hass: HomeAssistant):
+    """No check without billed sensors; it appears once they're registered."""
+    await _setup_with_readings(hass)
+    assert hass.states.get("sensor.home_invoice_check") is None
+
+    _billed_state(hass, "vt", 10)
+    await hass.async_block_till_done()
+    state = hass.states.get("sensor.home_invoice_check")
+    assert state is not None
+    assert state.attributes["status"] == "ok"

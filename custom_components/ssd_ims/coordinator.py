@@ -687,6 +687,10 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     _LOGGER.error("Error importing register costs: %s", e)
         await self._update_hourly_costs(pod_ids)
 
+    def registry_readings(self, pod_id: str) -> list[RegistryReading]:
+        """Latest fetched register readings of a POD (empty until fetched)."""
+        return self._registry_readings.get(pod_id, [])
+
     def _watch_supplier_prices(self, pod_ids: list[str]) -> None:
         """Request a repricing refresh when a supplier price sensor changes."""
         self._supplier_pod_ids = list(pod_ids)

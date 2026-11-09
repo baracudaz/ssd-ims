@@ -11,9 +11,12 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy, UnitOfPower
-from homeassistant.core import HomeAssistant
+from homeassistant.const import Platform
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -27,9 +30,18 @@ from .const import (
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
     SENSOR_TYPE_LABELS,
+    SUPPLIER_PRICE_DOMAIN,
 )
 from .helpers import sanitize_name
 from .coordinator import SsdImsDataCoordinator
+from .invoice_check import (
+    BANDS,
+    STATUS_MISMATCH,
+    STATUS_OK,
+    InvoiceCheck,
+    check_invoice,
+    parse_date,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,7 +85,32 @@ async def async_setup_entry(
                 )
             )
 
-    async_add_entities(sensors)
+    # The invoice check needs the supplier's billed consumption sensors;
+    # add it for a POD once they exist, also when they appear later.
+    checked: set[str] = set()
+
+    @callback
+    def _invoice_checks() -> list[SsdImsInvoiceCheckSensor]:
+        new = [
+            SsdImsInvoiceCheckSensor(
+                coordinator, pod_id, pod_name_mapping.get(pod_id, pod_id)
+            )
+            for pod_id in pod_ids
+            if pod_id not in checked and billed_entity_ids(hass, pod_id)
+        ]
+        checked.update(sensor.pod_id for sensor in new)
+        return new
+
+    @callback
+    def _registry_updated(event: Event) -> None:
+        if event.data["action"] == "create" and (new := _invoice_checks()):
+            async_add_entities(new)
+
+    config_entry.async_on_unload(
+        hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _registry_updated)
+    )
+
+    async_add_entities([*sensors, *_invoice_checks()])
 
 
 class SsdImsSensor(CoordinatorEntity[SsdImsDataCoordinator], SensorEntity):
@@ -299,3 +336,176 @@ class SsdImsRegisterSensor(SsdImsSensor):
             "reading_time": registry.get("reading_time"),
             "meter_serial_number": registry.get("serial_number"),
         }
+
+
+def billed_entity_ids(hass: HomeAssistant, pod_id: str) -> dict[str, str]:
+    """The supplier's billed consumption sensors of a POD, by tariff band."""
+    registry = er.async_get(hass)
+    return {
+        band: entity_id
+        for band in BANDS
+        if (
+            entity_id := registry.async_get_entity_id(
+                Platform.SENSOR,
+                SUPPLIER_PRICE_DOMAIN,
+                f"ELECTRICITY_{pod_id}_billed_consumption_{band}",
+            )
+        )
+    }
+
+
+class SsdImsInvoiceCheckSensor(SsdImsSensor):
+    """kWh billed on the last settlement invoice minus the metered kWh.
+
+    The billed kWh come from the supplier integration's billed consumption
+    sensors, the metered kWh from the register readings at the boundaries of
+    the billed period. A difference beyond billing rounding raises a repair
+    issue, removed again once an invoice matches.
+    """
+
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 1
+    _attr_icon = "mdi:receipt-text-check-outline"
+
+    def __init__(
+        self,
+        coordinator: SsdImsDataCoordinator,
+        pod_id: str,
+        friendly_name: str,
+    ) -> None:
+        """Initialize invoice check sensor."""
+        super().__init__(coordinator, pod_id, friendly_name)
+        self._attr_unique_id = f"{pod_id}_invoice_check"
+        self._setup_entity_naming("Invoice Check")
+        self._check: InvoiceCheck | None = None
+        self._watched: frozenset[str] = frozenset()
+        self._unsub_billed: Any = None
+
+    @property
+    def _issue_id(self) -> str:
+        return f"invoice_mismatch_{self.pod_id}"
+
+    async def async_added_to_hass(self) -> None:
+        """Watch the billed consumption sensors and check the invoice."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self.hass.bus.async_listen(
+                er.EVENT_ENTITY_REGISTRY_UPDATED, self._async_registry_updated
+            )
+        )
+        self.async_on_remove(self._unwatch_billed)
+        self._watch_billed()
+        self._update_check()
+
+    @callback
+    def _unwatch_billed(self) -> None:
+        if self._unsub_billed:
+            self._unsub_billed()
+            self._unsub_billed = None
+
+    @callback
+    def _watch_billed(self) -> None:
+        entity_ids = frozenset(billed_entity_ids(self.hass, self.pod_id).values())
+        if entity_ids == self._watched:
+            return
+        self._unwatch_billed()
+        self._watched = entity_ids
+        if entity_ids:
+            self._unsub_billed = async_track_state_change_event(
+                self.hass, list(entity_ids), self._async_billed_changed
+            )
+
+    @callback
+    def _async_registry_updated(self, event: Event) -> None:
+        self._watch_billed()
+
+    @callback
+    def _async_billed_changed(self, event: Event) -> None:
+        self._update_check()
+        self.async_write_ha_state()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Recheck with the latest register readings."""
+        self._update_check()
+        super()._handle_coordinator_update()
+
+    @callback
+    def _update_check(self) -> None:
+        """Compare the billed kWh with the register readings."""
+        billed: dict[str, float] = {}
+        period_from = period_to = None
+        for band, entity_id in billed_entity_ids(self.hass, self.pod_id).items():
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                continue
+            try:
+                billed[band] = float(state.state)
+            except ValueError:
+                continue
+            period_from = parse_date(state.attributes.get("period_from"))
+            period_to = parse_date(state.attributes.get("period_to"))
+        readings = self.coordinator.registry_readings(self.pod_id)
+        if not billed or period_from is None or period_to is None or not readings:
+            self._check = None
+            return
+        self._check = check_invoice(readings, period_from, period_to, billed)
+        self._update_issue(self._check)
+
+    @callback
+    def _update_issue(self, check: InvoiceCheck) -> None:
+        """Raise a repair issue on a mismatch, remove it once one matches."""
+        if check.status == STATUS_OK:
+            ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
+            return
+        if check.status != STATUS_MISMATCH:
+            return
+        details = "; ".join(
+            f"{band.upper()}: {band_check.billed:g} kWh billed, "
+            f"{band_check.metered:g} kWh metered"
+            for band, band_check in check.bands.items()
+        )
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="invoice_mismatch",
+            translation_placeholders={
+                "name": self.friendly_name,
+                "period_from": check.period_from.isoformat(),
+                "period_to": check.period_to.isoformat(),
+                "details": details,
+            },
+        )
+
+    @property
+    def native_value(self) -> StateType | None:
+        """Total billed minus metered kWh."""
+        if self._check is None or (difference := self._check.difference) is None:
+            return None
+        return round(difference, 3)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Status, billed period and the compared values per tariff."""
+        if self._check is None:
+            return None
+        attrs: dict[str, Any] = {
+            "status": self._check.status,
+            "period_from": self._check.period_from.isoformat(),
+            "period_to": self._check.period_to.isoformat(),
+        }
+        for band, band_check in self._check.bands.items():
+            pct = band_check.difference_pct
+            attrs.update(
+                {
+                    f"billed_{band}": band_check.billed,
+                    f"metered_{band}": round(band_check.metered, 3),
+                    f"difference_{band}": round(band_check.difference, 3),
+                    f"difference_{band}_pct": None if pct is None else round(pct, 2),
+                }
+            )
+        return attrs
