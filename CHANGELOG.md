@@ -1,5 +1,9 @@
 # Changelog
 
+## Version 2.6.0
+
+- **New feature**: Invoice check (#35). With `sse_ezona` 0.4.0+, an `Invoice Check` sensor per point compares the VT/NT (or single-rate) kWh billed on the latest settlement invoice (`ELECTRICITY_<EIC>_billed_consumption_vt/_nt/_jt`, with `period_from`/`period_to`) with the difference of the meter register readings at the period boundaries. The state is billed minus metered kWh; attributes hold the status, the period and the values per tariff. A difference over 1 kWh and 1 % raises a repair issue, removed once an invoice matches. Periods that don't start and end on a register reading (1st of the month) are not compared (`no_reading`), nor are periods with a meter replacement (`meter_replaced`). The sensor is added as soon as the supplier's billed consumption sensors exist.
+
 ## Version 2.5.0
 
 - **New feature**: Price history for supplier prices (#33). With `sse_ezona` prices, each hour's cost uses the price valid in that hour, read from the price sensor's hourly mean in Home Assistant's long-term statistics. A price change applies from its hour on, and recomputing recent hours (when a register reading arrives) keeps the old prices for the hours before the change. Monthly VT/NT costs are priced the same way. Hours before the sensor's first recorded hour use its first known price. Prices from the options still apply to every hour, as before.
