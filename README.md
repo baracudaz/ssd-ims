@@ -17,6 +17,7 @@ Integrácia sťahuje údaje o spotrebe a dodávke elektriny z Portálu energetic
 - Hodinová spotreba a dodávka do siete v paneli Energie, s históriou až 365 dní dozadu
 - Náklady v eurách podľa vašich cien za vysokú (VT) a nízku tarifu (NT)
 - Mesačné stavy registrov VT/NT a maximálny výkon z elektromera
+- Kontrola vyúčtovacej faktúry SSE voči stavom elektromera
 - Viac odberných miest naraz, každé s vlastným názvom
 
 Portál zverejňuje údaje raz denne po polnoci, najnovšie údaje sú preto vždy za včerajšok.
@@ -88,6 +89,14 @@ Uložením možností sa nové ceny uplatnia hneď. Pri cenách z možností hod
 
 </details>
 
+## Kontrola faktúry
+
+Ak máte integráciu [SSE eZóna](https://github.com/baracudaz/sse-ezona) vo verzii 0.4.0 alebo novšej, SSD IMS porovná spotrebu VT/NT vyúčtovanú v poslednej vyúčtovacej faktúre s rozdielom stavov registrov elektromera za to isté obdobie. Výsledok ukáže entita `sensor.<názov>_invoice_check`: rozdiel vyúčtovanej a nameranej spotreby v kWh (kladný znamená, že faktúra účtuje viac), v atribútoch obdobie, stav a hodnoty pre každú tarifu. Entita sa pridá sama, keď SSE eZóna vytvorí entity vyúčtovanej spotreby pre odberné miesto s rovnakým EIC kódom.
+
+Ak sa faktúra líši o viac ako 1 kWh a zároveň o viac ako 1 %, v **Nastavenia** → **Opravy** sa objaví upozornenie. Keď bude ďalšia faktúra sedieť, upozornenie zmizne samo.
+
+Porovnať sa dá len obdobie, ktoré začína aj končí dňom odpočtu registrov (1. deň v mesiaci) — vyúčtovacie obdobia SSE to spravidla spĺňajú. Inak má entita stav `no_reading`, a ak sa v období menil elektromer, `meter_replaced`.
+
 ## Entity a štatistiky
 
 Každé odberné miesto je samostatné zariadenie. Jeho EIC kód nájdete na stránke zariadenia v karte **Informácie o zariadení** ako **Sériové číslo**.
@@ -107,6 +116,7 @@ Každé odberné miesto je samostatné zariadenie. Jeho EIC kód nájdete na str
 | `sensor.<názov>_low_tariff_meter_reading` | Posledný mesačný stav registra NT, 1.8.2 (kWh) |
 | `sensor.<názov>_peak_demand` | Maximálny štvrťhodinový výkon za posledné obdobie, 1.6.0 (kW) |
 | `sensor.<názov>_last_update` | Čas poslednej aktualizácie |
+| `sensor.<názov>_invoice_check` | Vyúčtovaná mínus nameraná spotreba z poslednej faktúry SSE (kWh), ak je nainštalovaná SSE eZóna |
 
 Entity registrov majú atribúty `reading_time` (čas odpočtu) a `meter_serial_number` (výrobné číslo elektromera).
 
