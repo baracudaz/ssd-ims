@@ -92,6 +92,10 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         self._supplier_entity_ids: frozenset[str] = frozenset()
         self._unsub_supplier: CALLBACK_TYPE | None = None
         self._reprice_requested = False
+        # Supplier sensors added later (e.g. the supplier integration set up
+        # after today's update) are picked up from entity registry events.
+        self._supplier_pod_ids: list[str] = []
+        self._unsub_supplier_registry: CALLBACK_TYPE | None = None
 
         scan_interval = timedelta(
             minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -685,6 +689,11 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
     def _watch_supplier_prices(self, pod_ids: list[str]) -> None:
         """Request a repricing refresh when a supplier price sensor changes."""
+        self._supplier_pod_ids = list(pod_ids)
+        if self._unsub_supplier_registry is None:
+            self._unsub_supplier_registry = self.hass.bus.async_listen(
+                er.EVENT_ENTITY_REGISTRY_UPDATED, self._async_supplier_registry_updated
+            )
         registry = er.async_get(self.hass)
         entity_ids = frozenset(
             entity_id
@@ -694,7 +703,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         )
         if entity_ids == self._supplier_entity_ids:
             return
-        self.async_unwatch_supplier_prices()
+        self._unwatch_supplier_states()
         self._supplier_entity_ids = entity_ids
         if entity_ids:
             self._unsub_supplier = async_track_state_change_event(
@@ -703,11 +712,56 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
     @callback
     def async_unwatch_supplier_prices(self) -> None:
-        """Stop watching the supplier price sensors."""
+        """Stop watching the supplier price sensors and their registry."""
+        if self._unsub_supplier_registry:
+            self._unsub_supplier_registry()
+            self._unsub_supplier_registry = None
+        self._unwatch_supplier_states()
+
+    @callback
+    def _unwatch_supplier_states(self) -> None:
+        """Stop watching the states of the supplier price sensors."""
         if self._unsub_supplier:
             self._unsub_supplier()
             self._unsub_supplier = None
         self._supplier_entity_ids = frozenset()
+
+    @callback
+    def _async_supplier_registry_updated(self, event: Event) -> None:
+        """Watch supplier price sensors registered after the last update.
+
+        Without this, a supplier integration set up after the day's update
+        would only be used the next day, because the daily gate skips the
+        full update that looks the sensors up.
+        """
+        entity_id = event.data["entity_id"]
+        if entity_id not in self._supplier_entity_ids:
+            entry = er.async_get(self.hass).async_get(entity_id)
+            if entry is None or entry.platform != SUPPLIER_PRICE_DOMAIN:
+                return
+        before = self._supplier_entity_ids
+        self._watch_supplier_prices(self._supplier_pod_ids)
+        if self._supplier_entity_ids == before:
+            return
+        # The sensor may already have its value; otherwise the state listener
+        # reprices once it gets one.
+        for watched in self._supplier_entity_ids - before:
+            state = self.hass.states.get(watched)
+            try:
+                float(state.state if state else "")
+            except ValueError:
+                continue
+            self._request_reprice()
+            return
+        if before - self._supplier_entity_ids:
+            # A sensor went away: price from the options again.
+            self._request_reprice()
+
+    @callback
+    def _request_reprice(self) -> None:
+        """Flag a repricing and request a (debounced) refresh."""
+        self._reprice_requested = True
+        self.hass.async_create_task(self.async_request_refresh())
 
     @callback
     def _async_supplier_price_changed(self, event: Event) -> None:
@@ -719,10 +773,9 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             float(new.state)
         except ValueError:
             return
-        self._reprice_requested = True
         # Debounced by the coordinator, so VT and NT changing together cause
         # a single refresh.
-        self.hass.async_create_task(self.async_request_refresh())
+        self._request_reprice()
 
     @staticmethod
     def _supplier_entity_id(

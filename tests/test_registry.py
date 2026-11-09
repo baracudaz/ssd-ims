@@ -224,6 +224,8 @@ def _make_coordinator(api_client, config, data=None):
     coordinator._supplier_entity_ids = frozenset()
     coordinator._unsub_supplier = None
     coordinator._reprice_requested = False
+    coordinator._supplier_pod_ids = []
+    coordinator._unsub_supplier_registry = None
     coordinator.data = data
     # No supplier integration installed unless a test says otherwise
     coordinator._supplier_prices = MagicMock(return_value=None)
@@ -770,6 +772,71 @@ class TestSupplierPriceChanges:
 
         coordinator.async_unwatch_supplier_prices()
         unsub.assert_called_once()
+        coordinator.hass.bus.async_listen.return_value.assert_called_once()
+
+    def _registry_event(self, coordinator, registry, entity_id, *, created):
+        """Deliver a registry event, with the sensor present or not."""
+        with (
+            patch(
+                "custom_components.ssd_ims.coordinator.er.async_get",
+                return_value=registry,
+            ),
+            patch(
+                "custom_components.ssd_ims.coordinator.async_track_state_change_event",
+                return_value=MagicMock(),
+            ) as mock_track,
+        ):
+            uids = {f"ELECTRICITY_{POD_ID}_price_vt": entity_id} if created else {}
+            registry.async_get_entity_id.side_effect = lambda platform, domain, uid: (
+                uids.get(uid)
+            )
+            event = MagicMock()
+            event.data = {"action": "create" if created else "remove"}
+            event.data["entity_id"] = entity_id
+            coordinator._async_supplier_registry_updated(event)
+        return mock_track
+
+    @pytest.mark.parametrize(("state", "repriced"), [("0.25", True), (None, False)])
+    def test_supplier_sensor_added_later_is_watched(self, state, repriced):
+        """A sensor registered after the day's update is used the same day."""
+        coordinator = self._coordinator()
+        coordinator._supplier_pod_ids = [POD_ID]
+        registry = MagicMock()
+        registry.async_get.return_value = MagicMock(platform="sse_ezona")
+        coordinator.hass.states.get.return_value = (
+            None if state is None else MagicMock(state=state)
+        )
+        mock_track = self._registry_event(
+            coordinator, registry, "sensor.home_vt", created=True
+        )
+        assert mock_track.call_args.args[1] == ["sensor.home_vt"]
+        # Without a value yet, the state listener reprices once it gets one.
+        assert coordinator._reprice_requested is repriced
+
+    def test_other_integrations_entities_are_ignored(self):
+        """Registry events of unrelated entities change nothing."""
+        coordinator = self._coordinator()
+        registry = MagicMock()
+        registry.async_get.return_value = MagicMock(platform="other")
+        mock_track = self._registry_event(
+            coordinator, registry, "sensor.other", created=True
+        )
+        mock_track.assert_not_called()
+        assert not coordinator._reprice_requested
+
+    def test_removed_supplier_sensor_falls_back_to_options(self):
+        """Removing a watched sensor stops watching it and reprices."""
+        coordinator = self._coordinator()
+        coordinator._supplier_pod_ids = [POD_ID]
+        coordinator._supplier_entity_ids = frozenset({"sensor.home_vt"})
+        old_unsub = MagicMock()
+        coordinator._unsub_supplier = old_unsub
+        registry = MagicMock()
+        registry.async_get.return_value = None
+        self._registry_event(coordinator, registry, "sensor.home_vt", created=False)
+        old_unsub.assert_called_once()
+        assert coordinator._supplier_entity_ids == frozenset()
+        assert coordinator._reprice_requested
 
 
 H0 = datetime(2026, 11, 1, 0, tzinfo=UTC)
