@@ -1,20 +1,25 @@
 # https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 version: 2
 updates:
-  - package-ecosystem: "devcontainers"
-    directory: "/"
-    schedule:
-      interval: "daily"
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
 
+  # requirements.txt pins the development and test tools; the integration
+  # itself only needs what manifest.json lists.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "daily"
-    ignore:
-      # Dependabot should not update Home Assistant as that should match the homeassistant key in hacs.json
-      - dependency-name: "homeassistant"
+      interval: "weekly"
+    groups:
+      # pytest-homeassistant is published by Home Assistant core with the
+      # same version as homeassistant and must be bumped together with it.
+      home-assistant:
+        patterns: ["homeassistant", "pytest-homeassistant", "hassil"]
+      dev-tools:
+        patterns: ["*"]
+        exclude-patterns: ["homeassistant", "pytest-homeassistant", "hassil"]
