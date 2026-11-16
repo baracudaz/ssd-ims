@@ -15,6 +15,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # pytest-homeassistant pins these exactly (pytest==, pytest-asyncio==);
+      # bump them by hand to the versions it requires when it changes.
+      - dependency-name: "pytest"
+      - dependency-name: "pytest-asyncio"
     groups:
       # pytest-homeassistant is published by Home Assistant core with the
       # same version as homeassistant and must be bumped together with it.
