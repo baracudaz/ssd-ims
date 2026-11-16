@@ -14,6 +14,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -29,7 +31,9 @@ from .const import (
     CONF_POD_NAME_MAPPING,
     CONF_POINT_OF_DELIVERY,
     CONF_PRICE_NT,
+    CONF_PRICE_NT_ENTITY,
     CONF_PRICE_VT,
+    CONF_PRICE_VT_ENTITY,
     CONF_SCAN_INTERVAL,
     CURRENCY,
     DEFAULT_ENABLE_HISTORY_IMPORT,
@@ -424,6 +428,9 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
                 unit_of_measurement=f"{CURRENCY}/kWh",
             )
         )
+        price_entity_selector = EntitySelector(
+            EntitySelectorConfig(domain=["sensor", "input_number", "number"])
+        )
         options = self.config_entry.options
 
         return self.async_show_form(
@@ -451,6 +458,18 @@ class SsdImsOptionsFlow(config_entries.OptionsFlow):
                         CONF_PRICE_NT,
                         description={"suggested_value": options.get(CONF_PRICE_NT)},
                     ): price_selector,
+                    vol.Optional(
+                        CONF_PRICE_VT_ENTITY,
+                        description={
+                            "suggested_value": options.get(CONF_PRICE_VT_ENTITY)
+                        },
+                    ): price_entity_selector,
+                    vol.Optional(
+                        CONF_PRICE_NT_ENTITY,
+                        description={
+                            "suggested_value": options.get(CONF_PRICE_NT_ENTITY)
+                        },
+                    ): price_entity_selector,
                 }
             ),
             errors=errors,

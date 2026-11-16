@@ -62,15 +62,19 @@
     "step": {
       "init": {
         "title": "SSD IMS Options",
-        "description": "Update integration settings. Optional VT/NT prices are final prices in EUR per kWh incl. VAT, as printed on your supplier invoice (SSE: \"Aktuálne koncové ceny elektriny platné pre Vašu sadzbu\"). They are used to import hourly costs for the actual consumption statistic and monthly costs for the tariff register readings. For a single-rate tariff (D1/D2) fill in VT only; leave both empty to skip costs. If the SSE eZóna integration (sse_ezona) is installed, its prices are used instead for points with the same EIC code.",
+        "description": "Update integration settings. Optional VT/NT prices are final prices in EUR per kWh incl. VAT, as printed on your supplier invoice (SSE: \"Aktuálne koncové ceny elektriny platné pre Vašu sadzbu\"). They are used to import hourly costs for the actual consumption statistic and monthly costs for the tariff register readings. For a single-rate tariff (D1/D2) fill in VT only; leave both empty to skip costs. Instead of a fixed price you can choose an entity holding the price (a sensor, input_number or number), e.g. from your supplier's integration; it is then used instead, and with a sensor that records statistics each hour is costed with the price valid then.",
         "data": {
           "scan_interval": "Update interval",
           "price_vt": "High tariff (VT) price",
-          "price_nt": "Low tariff (NT) price"
+          "price_nt": "Low tariff (NT) price",
+          "price_vt_entity": "High tariff (VT) price entity",
+          "price_nt_entity": "Low tariff (NT) price entity"
         },
         "data_description": {
           "price_vt": "Final price in EUR per kWh including VAT and all per-kWh fees, e.g. from your supplier invoice.",
-          "price_nt": "Final price in EUR per kWh including VAT and all per-kWh fees, e.g. from your supplier invoice. Leave empty for single-rate tariffs (D1/D2) — the VT price is then used for all consumption."
+          "price_nt": "Final price in EUR per kWh including VAT and all per-kWh fees, e.g. from your supplier invoice. Leave empty for single-rate tariffs (D1/D2) — the VT price is then used for all consumption.",
+          "price_vt_entity": "Optional. An entity whose state is the VT price in EUR per kWh; used instead of the fixed VT price.",
+          "price_nt_entity": "Optional. An entity whose state is the NT price in EUR per kWh; used instead of the fixed NT price."
         }
       }
     }

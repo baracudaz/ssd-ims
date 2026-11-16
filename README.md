@@ -69,7 +69,7 @@ Home Assistant neuplatní cenu z panela Energie na údaje importované touto int
 2. V nastaveniach panela Energie upravte pripojenie k sieti a v časti **Sledovanie nákladov** zvoľte **Použiť entitu sledujúcu celkové náklady** → `ssd_ims:<názov>_actual_consumption_cost`.
 3. V nastaveniach domácnosti si nastavte menu **EUR**.
 
-Ak ste zákazníkom SSE, ceny nemusíte zadávať ručne: integrácia [SSE eZóna](https://github.com/baracudaz/sse-ezona) ich preberá z portálu dodávateľa vrátane energopomoci a SSD IMS ich pre odberné miesto s rovnakým EIC kódom použije automaticky namiesto cien z možností. Každú hodinu ocení cenou, ktorá v tej hodine platila, takže zmena ceny sa prejaví až od svojej hodiny a staršie náklady nezmení. Krok 2 a 3 platia aj vtedy.
+Namiesto pevnej ceny môžete v tých istých možnostiach zvoliť **Entita s cenou VT** / **Entita s cenou NT** — ľubovoľný senzor, `input_number` alebo `number`, ktorého stav je cena za kWh v eurách, napr. z integrácie vášho dodávateľa (zákazníci SSE môžu použiť [SSE eZóna](https://github.com/baracudaz/sse-ezona)). Použije sa namiesto pevnej ceny a pri zmene sa náklady hneď prepočítajú. Ak senzor ukladá dlhodobé štatistiky, každá hodina sa ocení cenou, ktorá v nej platila, takže zmena ceny sa prejaví až od svojej hodiny a staršie náklady nezmení. Kým entita nemá hodnotu, náklady sa nepočítajú. Krok 2 a 3 platia aj vtedy.
 
 <img src="artifacts/screenshots/options.png" alt="Možnosti SSD IMS" width="450">
 
@@ -84,7 +84,7 @@ Ak ste zákazníkom SSE, ceny nemusíte zadávať ručne: integrácia [SSE eZón
 
 Elektromer rozdeľuje spotrebu na VT a NT len v mesačných odpočtoch registrov; kedy HDO prepínalo tarify, portál nezverejňuje. Každá hodina sa preto ocení priemernou cenou svojho obdobia, váženou pomerom VT/NT v tomto období. Mesačné náklady sú tak presné, rozdelenie na hodiny je priemer. Hodiny po poslednom odpočte sa ocenia pomerom predchádzajúceho obdobia a po zverejnení odpočtu sa samy opravia.
 
-Uložením možností sa nové ceny uplatnia hneď. Pri cenách z možností hodinové náklady sa novou cenou prepočítajú za posledné tri obdobia registrov (zhruba dva mesiace a aktuálny mesiac), staršie hodiny si ponechajú pôvodnú cenu. Pri cenách z integrácie SSE eZóna sa použije história ceny, ktorú si Home Assistant ukladá v dlhodobých štatistikách; hodiny pred jej začiatkom sa ocenia prvou známou cenou. Náklady existujú len pre hodiny, ktorých spotreba bola importovaná.
+Uložením možností sa nové ceny uplatnia hneď. Pri cenách z možností hodinové náklady sa novou cenou prepočítajú za posledné tri obdobia registrov (zhruba dva mesiace a aktuálny mesiac), staršie hodiny si ponechajú pôvodnú cenu. Pri cenách z entity sa použije história ceny, ktorú si Home Assistant ukladá v jej dlhodobých štatistikách; hodiny pred jej začiatkom sa ocenia prvou známou cenou. Náklady existujú len pre hodiny, ktorých spotreba bola importovaná.
 
 </details>
 

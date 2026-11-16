@@ -14,10 +14,8 @@ from homeassistant.components.recorder.statistics import (
     StatisticMeanType,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
@@ -33,7 +31,9 @@ from .const import (
     CONF_POD_NAME_MAPPING,
     CONF_POINT_OF_DELIVERY,
     CONF_PRICE_NT,
+    CONF_PRICE_NT_ENTITY,
     CONF_PRICE_VT,
+    CONF_PRICE_VT_ENTITY,
     CONF_SCAN_INTERVAL,
     COST_RECOMPUTE_PERIODS,
     CURRENCY,
@@ -48,7 +48,6 @@ from .const import (
     SENSOR_TYPE_ACTUAL_CONSUMPTION,
     SENSOR_TYPE_ACTUAL_SUPPLY,
     STAT_ACTUAL_CONSUMPTION_COST,
-    SUPPLIER_PRICE_DOMAIN,
 )
 from .helpers import PriceHistory, calculate_yesterday_range, sanitize_name
 from .models import ChartData, PointOfDelivery, RegistryReading
@@ -86,16 +85,12 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         self._last_registry_fetch_date: date | None = None
         # Latest fetched register readings per POD, for pricing hourly costs
         self._registry_readings: dict[str, list[RegistryReading]] = {}
-        # Supplier price sensors being watched, and the listener watching them.
-        # A price change requests a refresh that only reprices (see
+        # Price entities being watched, and the listener watching them. A
+        # price change requests a refresh that only reprices (see
         # _async_update_data), without new portal requests.
-        self._supplier_entity_ids: frozenset[str] = frozenset()
-        self._unsub_supplier: CALLBACK_TYPE | None = None
+        self._price_entities_watched: frozenset[str] = frozenset()
+        self._unsub_price_entities: CALLBACK_TYPE | None = None
         self._reprice_requested = False
-        # Supplier sensors added later (e.g. the supplier integration set up
-        # after today's update) are picked up from entity registry events.
-        self._supplier_pod_ids: list[str] = []
-        self._unsub_supplier_registry: CALLBACK_TYPE | None = None
 
         scan_interval = timedelta(
             minutes=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -201,7 +196,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             self._reprice_requested = False
             await self._update_registry(pod_ids, all_pod_data, today)
             await self._update_hourly_costs(pod_ids)
-            self._watch_supplier_prices(pod_ids)
+            self._watch_price_entities()
 
             if stats_complete:
                 self._last_successful_data_date = today
@@ -670,10 +665,10 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                 )
 
     async def _async_reprice(self) -> None:
-        """Recompute costs from cached readings after a supplier price change."""
+        """Recompute costs from cached readings after a price entity change."""
         self._reprice_requested = False
         pod_ids = list(self._registry_readings)
-        _LOGGER.debug("Supplier price changed, recomputing costs")
+        _LOGGER.debug("Price changed, recomputing costs")
         async with self._registry_lock:
             for pod_id in pod_ids:
                 pod_name = self.config.get(CONF_POD_NAME_MAPPING, {}).get(
@@ -687,85 +682,40 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     _LOGGER.error("Error importing register costs: %s", e)
         await self._update_hourly_costs(pod_ids)
 
-    def _watch_supplier_prices(self, pod_ids: list[str]) -> None:
-        """Request a repricing refresh when a supplier price sensor changes."""
-        self._supplier_pod_ids = list(pod_ids)
-        if self._unsub_supplier_registry is None:
-            self._unsub_supplier_registry = self.hass.bus.async_listen(
-                er.EVENT_ENTITY_REGISTRY_UPDATED, self._async_supplier_registry_updated
+    def _price_entity_ids(self) -> dict[str, str]:
+        """Entities chosen in the options as the VT/NT price, by tariff."""
+        return {
+            tariff: entity_id
+            for tariff, key in (
+                ("vt", CONF_PRICE_VT_ENTITY),
+                ("nt", CONF_PRICE_NT_ENTITY),
             )
-        registry = er.async_get(self.hass)
-        entity_ids = frozenset(
-            entity_id
-            for pod_id in pod_ids
-            for tariff in ("vt", "nt", "jt")
-            if (entity_id := self._supplier_entity_id(registry, pod_id, tariff))
-        )
-        if entity_ids == self._supplier_entity_ids:
+            if (entity_id := self.config.get(key))
+        }
+
+    def _watch_price_entities(self) -> None:
+        """Request a repricing refresh when a price entity changes."""
+        entity_ids = frozenset(self._price_entity_ids().values())
+        if entity_ids == self._price_entities_watched:
             return
-        self._unwatch_supplier_states()
-        self._supplier_entity_ids = entity_ids
+        self.async_unwatch_price_entities()
+        self._price_entities_watched = entity_ids
         if entity_ids:
-            self._unsub_supplier = async_track_state_change_event(
-                self.hass, list(entity_ids), self._async_supplier_price_changed
+            self._unsub_price_entities = async_track_state_change_event(
+                self.hass, list(entity_ids), self._async_price_entity_changed
             )
 
     @callback
-    def async_unwatch_supplier_prices(self) -> None:
-        """Stop watching the supplier price sensors and their registry."""
-        if self._unsub_supplier_registry:
-            self._unsub_supplier_registry()
-            self._unsub_supplier_registry = None
-        self._unwatch_supplier_states()
+    def async_unwatch_price_entities(self) -> None:
+        """Stop watching the price entities."""
+        if self._unsub_price_entities:
+            self._unsub_price_entities()
+            self._unsub_price_entities = None
+        self._price_entities_watched = frozenset()
 
     @callback
-    def _unwatch_supplier_states(self) -> None:
-        """Stop watching the states of the supplier price sensors."""
-        if self._unsub_supplier:
-            self._unsub_supplier()
-            self._unsub_supplier = None
-        self._supplier_entity_ids = frozenset()
-
-    @callback
-    def _async_supplier_registry_updated(self, event: Event) -> None:
-        """Watch supplier price sensors registered after the last update.
-
-        Without this, a supplier integration set up after the day's update
-        would only be used the next day, because the daily gate skips the
-        full update that looks the sensors up.
-        """
-        entity_id = event.data["entity_id"]
-        if entity_id not in self._supplier_entity_ids:
-            entry = er.async_get(self.hass).async_get(entity_id)
-            if entry is None or entry.platform != SUPPLIER_PRICE_DOMAIN:
-                return
-        before = self._supplier_entity_ids
-        self._watch_supplier_prices(self._supplier_pod_ids)
-        if self._supplier_entity_ids == before:
-            return
-        # The sensor may already have its value; otherwise the state listener
-        # reprices once it gets one.
-        for watched in self._supplier_entity_ids - before:
-            state = self.hass.states.get(watched)
-            try:
-                float(state.state if state else "")
-            except ValueError:
-                continue
-            self._request_reprice()
-            return
-        if before - self._supplier_entity_ids:
-            # A sensor went away: price from the options again.
-            self._request_reprice()
-
-    @callback
-    def _request_reprice(self) -> None:
-        """Flag a repricing and request a (debounced) refresh."""
-        self._reprice_requested = True
-        self.hass.async_create_task(self.async_request_refresh())
-
-    @callback
-    def _async_supplier_price_changed(self, event: Event) -> None:
-        """Flag a repricing when a supplier price gets a new numeric value."""
+    def _async_price_entity_changed(self, event: Event) -> None:
+        """Flag a repricing when a price entity gets a new numeric value."""
         old, new = event.data.get("old_state"), event.data.get("new_state")
         if new is None or (old is not None and old.state == new.state):
             return
@@ -773,50 +723,31 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             float(new.state)
         except ValueError:
             return
+        self._reprice_requested = True
         # Debounced by the coordinator, so VT and NT changing together cause
         # a single refresh.
-        self._request_reprice()
-
-    @staticmethod
-    def _supplier_entity_id(
-        registry: er.EntityRegistry, pod_id: str, tariff: str
-    ) -> str | None:
-        """Entity ID of the supplier's price sensor for a POD and tariff."""
-        return registry.async_get_entity_id(
-            Platform.SENSOR,
-            SUPPLIER_PRICE_DOMAIN,
-            f"ELECTRICITY_{pod_id}_price_{tariff}",
-        )
+        self.hass.async_create_task(self.async_request_refresh())
 
     async def _pod_price_histories(
         self, pod_id: str
     ) -> tuple[PriceHistory | None, PriceHistory | None]:
         """Return the (VT, NT) price histories for a POD.
 
-        Supplier price sensors have state_class measurement, so Home
-        Assistant keeps their hourly mean in its long-term statistics. Each
-        hour is priced with that mean, so a price change applies from the
-        hour it happened and never retroactively. Prices from the options
-        have no history and apply to every hour, as before.
+        A price entity with state_class measurement has its hourly mean in
+        Home Assistant's long-term statistics. Each hour is priced with that
+        mean, so a price change applies from the hour it happened and never
+        retroactively. Fixed prices have no history and apply to every hour.
         """
         price_vt, price_nt = self._pod_prices(pod_id)
         histories: dict[str, PriceHistory | None] = {
             "vt": None if price_vt is None else PriceHistory(price_vt),
             "nt": None if price_nt is None else PriceHistory(price_nt),
         }
-        if price_vt is None or self._supplier_prices(pod_id) is None:
-            return histories["vt"], histories["nt"]
-
-        registry = er.async_get(self.hass)
         entity_ids = {
             tariff: entity_id
-            for tariff in ("vt", "nt", "jt")
-            if (entity_id := self._supplier_entity_id(registry, pod_id, tariff))
+            for tariff, entity_id in self._price_entity_ids().items()
+            if histories[tariff] is not None
         }
-        # A single-rate point's JT price is its VT price.
-        if "vt" not in entity_ids and "jt" in entity_ids:
-            entity_ids["vt"] = entity_ids.pop("jt")
-        entity_ids.pop("jt", None)
         if not entity_ids:
             return histories["vt"], histories["nt"]
 
@@ -857,54 +788,28 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
         return value
 
     def _pod_prices(self, pod_id: str) -> tuple[float | None, float | None]:
-        """Return the (VT, NT) price per kWh incl. VAT for a POD.
+        """Return the (VT, NT) price per kWh incl. VAT.
 
-        Prices from the supplier integration's sensors for the same EIC win
-        over the prices entered in the options. When the supplier has
-        sensors for the POD but they have no value yet (e.g. right after a
-        restart), no price is returned rather than a possibly stale manual
-        one; the costs are then computed on a later run.
+        For each tariff, the entity chosen in the options wins over the fixed
+        price. While a chosen entity has no value (e.g. right after a
+        restart), no price is returned at all rather than a possibly stale
+        fixed one, so night consumption is never costed at the VT price; the
+        costs are computed once the entity has a value.
         """
-        supplier = self._supplier_prices(pod_id)
-        if supplier is not None:
-            return supplier
-        price_vt = self.config.get(CONF_PRICE_VT)
-        price_nt = self.config.get(CONF_PRICE_NT)
-        return (
-            None if price_vt is None else float(price_vt),
-            None if price_nt is None else float(price_nt),
-        )
-
-    def _supplier_prices(self, pod_id: str) -> tuple[float | None, float | None] | None:
-        """Read the supplier integration's price sensors for a POD.
-
-        Returns None when the supplier has no price sensors for this EIC,
-        and (None, None) while any of them has no value: pricing night
-        consumption with the VT price just because the NT sensor is
-        unavailable would be wrong.
-        """
-        registry = er.async_get(self.hass)
-        entity_ids = {
-            tariff: self._supplier_entity_id(registry, pod_id, tariff)
-            for tariff in ("vt", "nt", "jt")
-        }
-        if not any(entity_ids.values()):
-            return None
-
-        def _value(tariff: str) -> float | None:
-            if not (entity_id := entity_ids[tariff]):
-                return None
+        prices: dict[str, float | None] = {}
+        for tariff, key in (("vt", CONF_PRICE_VT), ("nt", CONF_PRICE_NT)):
+            value = self.config.get(key)
+            prices[tariff] = None if value is None else float(value)
+        for tariff, entity_id in self._price_entity_ids().items():
             state = self.hass.states.get(entity_id)
             try:
-                return float(state.state) if state else None
+                prices[tariff] = float(state.state) if state else None
             except (TypeError, ValueError):
-                return None
-
-        values = {t: _value(t) for t, entity_id in entity_ids.items() if entity_id}
-        if None in values.values():
-            _LOGGER.debug("Supplier price sensors have no value yet")
-            return None, None
-        return values.get("vt", values.get("jt")), values.get("nt")
+                prices[tariff] = None
+            if prices[tariff] is None:
+                _LOGGER.debug("Price entity %s has no value yet", entity_id)
+                return None, None
+        return prices["vt"], prices["nt"]
 
     @staticmethod
     def _register_periods(

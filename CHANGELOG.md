@@ -1,5 +1,12 @@
 # Changelog
 
+## Version 2.6.0
+
+- **New feature**: Price entities. The options have two new optional fields, *VT price entity* and *NT price entity*: any `sensor`, `input_number` or `number` whose state is the price per kWh, e.g. from a supplier integration. Each wins over the fixed price of its tariff; a change reprices right away from the cached register readings, and a sensor with long-term statistics prices each hour with the price valid then (as in 2.5.0). While a chosen entity has no value, no costs are computed.
+- **Internal**: The automatic lookup of `sse_ezona` price sensors by EIC (2.4.0) is removed; ssd-ims no longer knows about any supplier integration.
+
+**Upgrading**: if you used `sse_ezona` prices, choose its *End price VT* / *End price NT* sensors (single-rate: the JT sensor as VT) in the options; until then the fixed prices from the options are used. The price history recorded so far is kept.
+
 ## Version 2.5.0
 
 - **New feature**: Price history for supplier prices (#33). With `sse_ezona` prices, each hour's cost uses the price valid in that hour, read from the price sensor's hourly mean in Home Assistant's long-term statistics. A price change applies from its hour on, and recomputing recent hours (when a register reading arrives) keeps the old prices for the hours before the change. Monthly VT/NT costs are priced the same way. Hours before the sensor's first recorded hour use its first known price. Prices from the options still apply to every hour, as before.

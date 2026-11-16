@@ -19,11 +19,10 @@ CONF_HISTORY_DAYS: Final = "history_days"
 # the monthly tariff register readings.
 CONF_PRICE_VT: Final = "price_vt"
 CONF_PRICE_NT: Final = "price_nt"
-# Supplier integration whose per-point price sensors, when installed, take
-# precedence over the prices entered in the options. Matched by unique_id
-# "ELECTRICITY_<EIC>_price_<vt|nt|jt>" (JT = single-rate tariff); the EIC is
-# this integration's POD ID.
-SUPPLIER_PRICE_DOMAIN: Final = "sse_ezona"
+# Optional entities (any sensor, input_number or number) holding the VT/NT
+# price per kWh; they win over the fixed prices above.
+CONF_PRICE_VT_ENTITY: Final = "price_vt_entity"
+CONF_PRICE_NT_ENTITY: Final = "price_nt_entity"
 # SSD operates in Slovakia, so tariff prices and costs are always in euros,
 # regardless of the currency configured in Home Assistant.
 CURRENCY: Final = "EUR"
