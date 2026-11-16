@@ -2,9 +2,9 @@
 colorlog==6.12.0
 hassil==3.11.0
 homeassistant==2026.11.0
-pydantic==2.13.5
-pytest==9.0.3
-pytest-asyncio==1.4.0
+pydantic==2.14.3
+pytest==9.2.0
+pytest-asyncio==1.5.0
 pytest-cov==7.1.0
 pytest-homeassistant==2026.11.0
-ruff==0.15.1
+ruff==0.17.5
