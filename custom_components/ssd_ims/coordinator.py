@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 from datetime import UTC, date, datetime, timedelta
+from itertools import pairwise
 from typing import Any
 
 from homeassistant.components.recorder import get_instance
@@ -357,9 +358,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
 
                         hourly_data: dict[datetime, float] = {}
                         for i, timestamp_str in enumerate(chart_data.metering_datetime):
-                            timestamp_end_utc = datetime.fromisoformat(
-                                timestamp_str.replace("Z", "+00:00")
-                            )
+                            timestamp_end_utc = datetime.fromisoformat(timestamp_str)
                             timestamp_start_utc = timestamp_end_utc - timedelta(
                                 minutes=15
                             )
@@ -827,7 +826,7 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
             for r in sorted(readings, key=lambda r: r.reading_time)
             if r.consumption_tariff1 is not None and r.consumption_tariff2 is not None
         ]
-        for prev, cur in zip(ordered, ordered[1:], strict=False):
+        for prev, cur in pairwise(ordered):
             d_vt = cur.consumption_tariff1 - prev.consumption_tariff1
             d_nt = cur.consumption_tariff2 - prev.consumption_tariff2
             if cur.serial_number != prev.serial_number or d_vt < 0 or d_nt < 0:

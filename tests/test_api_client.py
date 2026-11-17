@@ -1,6 +1,7 @@
 """Test suite for SSD IMS API client."""
 
 from datetime import UTC, datetime
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -93,7 +94,7 @@ class TestSsdImsApiClient:
         # Captured from the live portal (https://ims.ssd.sk/api/account/login)
         # with deliberately non-existent credentials — it answers a wrong
         # username/password with 422, never 401/403 (see issue #25).
-        WRONG_CREDENTIALS_422_BODY = {
+        WRONG_CREDENTIALS_422_BODY: ClassVar[dict] = {
             "error": {
                 "module": "AC",
                 "code": "0x0100000F",
@@ -103,7 +104,7 @@ class TestSsdImsApiClient:
             }
         }
         # Same endpoint, empty username/password.
-        MISSING_FIELDS_422_BODY = {
+        MISSING_FIELDS_422_BODY: ClassVar[dict] = {
             "modelErrors": [
                 {
                     "field": "Password",
