@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -216,16 +217,10 @@ class TestStatisticsDayBoundaries:
             assert len(starts) == len(set(starts))
             assert starts == sorted(starts)
             # Hours are contiguous: nothing missing across midnight or DST.
-            assert all(
-                b - a == timedelta(hours=1)
-                for a, b in zip(starts, starts[1:], strict=False)
-            )
+            assert all(b - a == timedelta(hours=1) for a, b in pairwise(starts))
             # Every hour, including 23:00, holds all four quarters (4 kWh).
             sums = [0.0] + [stat["sum"] for stat in all_stats]
-            assert all(
-                b - a == pytest.approx(4.0)
-                for a, b in zip(sums, sums[1:], strict=False)
-            )
+            assert all(b - a == pytest.approx(4.0) for a, b in pairwise(sums))
             # The first hour is local midnight of the first imported day.
             assert dt_util.as_local(starts[0]).astimezone(tz).hour == 0
 

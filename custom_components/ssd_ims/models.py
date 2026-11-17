@@ -127,9 +127,9 @@ class ChartData(BaseModel):
                 raise ValueError(
                     f"Field '{info.field_name}' at index {i}: "
                     f"Cannot convert '{item}' (type: {type(item).__name__}) to float. "
-                    f"Raw data at position {i}: {repr(item)}. "
+                    f"Raw data at position {i}: {item!r}. "
                     f"Context around position {i}: {v[max(0, i - 2) : i + 3]}. "
-                    f"Original error: {str(e)}"
+                    f"Original error: {e!s}"
                 ) from e
 
         return result
@@ -152,7 +152,7 @@ class ChartData(BaseModel):
         except (ValueError, TypeError) as e:
             raise ValueError(
                 f"Field '{info.field_name}': Cannot convert '{v}' (type: {type(v).__name__}) to float. "
-                f"Raw value: {repr(v)}. Original error: {str(e)}"
+                f"Raw value: {v!r}. Original error: {e!s}"
             ) from e
 
 

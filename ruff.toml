@@ -1,0 +1,16 @@
+# Ruff's default rule set, with two rules that don't fit this integration.
+
+# A copy of Home Assistant core's guidance, kept as upstream wrote it
+# (ruff 0.17 also formats Python blocks in Markdown).
+extend-exclude = [".github/copilot-instructions.md"]
+
+[lint]
+ignore = [
+    # Catching every exception is deliberate where a failure must not crash
+    # Home Assistant: the coordinator, setup and the config flow log it and
+    # carry on (or show an error) instead.
+    "BLE001",
+    # A malformed portal response is a RuntimeError on purpose: callers in
+    # __init__.py and config_flow.py handle RuntimeError as a portal error.
+    "TRY004",
+]

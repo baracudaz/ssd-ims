@@ -28,8 +28,8 @@ from .const import (
     SENSOR_TYPE_ACTUAL_SUPPLY,
     SENSOR_TYPE_LABELS,
 )
-from .helpers import sanitize_name
 from .coordinator import SsdImsDataCoordinator
+from .helpers import sanitize_name
 
 _LOGGER = logging.getLogger(__name__)
 

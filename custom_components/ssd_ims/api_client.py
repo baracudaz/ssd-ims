@@ -42,7 +42,7 @@ def _log_data_sample(
 
     field_data = data[field_name]
     if not isinstance(field_data, list):
-        return f"Field '{field_name}' is not a list: {type(field_data).__name__} = {repr(field_data)}"
+        return f"Field '{field_name}' is not a list: {type(field_data).__name__} = {field_data!r}"
 
     total_len = len(field_data)
     if total_len == 0:
@@ -53,9 +53,11 @@ def _log_data_sample(
     for i, val in enumerate(field_data):
         if val is None:
             continue  # None is now valid - skip it
-        elif isinstance(val, str) and val.strip() == "":
-            problems.append(i)
-        elif not isinstance(val, (int, float, str)):
+        elif (
+            isinstance(val, str)
+            and val.strip() == ""
+            or not isinstance(val, (int, float, str))
+        ):
             problems.append(i)
 
     sample_info = f"length={total_len}"
@@ -415,7 +417,7 @@ class SsdImsApiClient:
             ]:
                 sample_info = _log_data_sample(data, field)
                 _LOGGER.error("  %s: %s", field, sample_info)
-            raise RuntimeError(f"Chart data validation failed: {str(e)}") from e
+            raise RuntimeError(f"Chart data validation failed: {e!s}") from e
 
     async def get_registry_data(
         self,

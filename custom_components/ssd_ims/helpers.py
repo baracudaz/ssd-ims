@@ -2,14 +2,14 @@
 
 import re
 from bisect import bisect_right
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 
 def calculate_yesterday_range(now: datetime) -> tuple[datetime, datetime]:
     """Calculate date range for yesterday in the API-expected format."""
     today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    period_start = (today_midnight - timedelta(days=1)).astimezone(timezone.utc)
-    period_end = today_midnight.astimezone(timezone.utc)
+    period_start = (today_midnight - timedelta(days=1)).astimezone(UTC)
+    period_end = today_midnight.astimezone(UTC)
     return period_start, period_end
 
 
