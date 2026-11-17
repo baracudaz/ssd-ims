@@ -11,15 +11,16 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN, HomeAssistant
-from homeassistant.helpers import issue_registry as ir
 from homeassistant.components.recorder.statistics import (
+    StatisticMeanType,
     async_add_external_statistics,
     get_last_statistics,
     statistics_during_period,
 )
-from homeassistant.components.recorder.statistics import StatisticMeanType
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant.common import MockConfigEntry
 from pytest_homeassistant.components.recorder.common import (
     async_wait_recording_done,

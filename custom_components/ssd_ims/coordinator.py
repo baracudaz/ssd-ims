@@ -8,10 +8,10 @@ from typing import Any
 
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import (
+    StatisticMeanType,
     async_add_external_statistics,
     get_last_statistics,
     statistics_during_period,
-    StatisticMeanType,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HomeAssistant, callback

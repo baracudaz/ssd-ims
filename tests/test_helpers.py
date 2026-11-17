@@ -1,6 +1,6 @@
 """Tests for pure helper functions: date-range math and name sanitization."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from custom_components.ssd_ims.helpers import calculate_yesterday_range, sanitize_name
@@ -12,14 +12,14 @@ class TestCalculateYesterdayRange:
     start of the range."""
 
     def test_utc_input_returns_utc_aware_bounds_one_day_apart(self):
-        now = datetime(2026, 6, 15, 14, 30, tzinfo=timezone.utc)
+        now = datetime(2026, 6, 15, 14, 30, tzinfo=UTC)
 
         start, end = calculate_yesterday_range(now)
 
-        assert start.tzinfo == timezone.utc
-        assert end.tzinfo == timezone.utc
-        assert start == datetime(2026, 6, 14, 0, 0, tzinfo=timezone.utc)
-        assert end == datetime(2026, 6, 15, 0, 0, tzinfo=timezone.utc)
+        assert start.tzinfo == UTC
+        assert end.tzinfo == UTC
+        assert start == datetime(2026, 6, 14, 0, 0, tzinfo=UTC)
+        assert end == datetime(2026, 6, 15, 0, 0, tzinfo=UTC)
         assert end - start == timedelta(days=1)
 
     def test_start_is_tz_aware_not_naive(self):
@@ -37,8 +37,8 @@ class TestCalculateYesterdayRange:
 
         start, end = calculate_yesterday_range(now)
 
-        assert start == datetime(2026, 1, 13, 23, 0, tzinfo=timezone.utc)
-        assert end == datetime(2026, 1, 14, 23, 0, tzinfo=timezone.utc)
+        assert start == datetime(2026, 1, 13, 23, 0, tzinfo=UTC)
+        assert end == datetime(2026, 1, 14, 23, 0, tzinfo=UTC)
 
     def test_local_midnight_boundaries_convert_correctly_in_summer_dst(self):
         """Local midnight in summer (CEST, UTC+2) must convert to 22:00 UTC
@@ -47,8 +47,8 @@ class TestCalculateYesterdayRange:
 
         start, end = calculate_yesterday_range(now)
 
-        assert start == datetime(2026, 7, 13, 22, 0, tzinfo=timezone.utc)
-        assert end == datetime(2026, 7, 14, 22, 0, tzinfo=timezone.utc)
+        assert start == datetime(2026, 7, 13, 22, 0, tzinfo=UTC)
+        assert end == datetime(2026, 7, 14, 22, 0, tzinfo=UTC)
 
 
 class TestSanitizeName:

@@ -1,6 +1,5 @@
 """Configuration flow for SSD IMS integration."""
 
-import asyncio
 import logging
 from typing import Any
 
@@ -111,7 +110,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "invalid_auth"
             except AbortFlow:
                 raise
-            except (ClientError, asyncio.TimeoutError, RuntimeError) as e:
+            except (TimeoutError, ClientError, RuntimeError) as e:
                 _LOGGER.error("Error during authentication: %s", e)
                 errors["base"] = "cannot_connect"
             except Exception:
@@ -156,7 +155,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         },
                     )
                 errors["base"] = "invalid_auth"
-            except (ClientError, asyncio.TimeoutError, RuntimeError) as e:
+            except (TimeoutError, ClientError, RuntimeError) as e:
                 _LOGGER.error("Error during re-authentication: %s", e)
                 errors["base"] = "cannot_connect"
             except Exception:
@@ -194,7 +193,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not await api_client.authenticate(self._username, self._password):
                 return self.async_abort(reason="reauth_required")
             self._pods = await api_client.get_points_of_delivery()
-        except (ClientError, asyncio.TimeoutError, RuntimeError) as e:
+        except (TimeoutError, ClientError, RuntimeError) as e:
             _LOGGER.error("Error fetching PODs during reconfigure: %s", e)
             return self.async_abort(reason="cannot_connect")
         except Exception:
