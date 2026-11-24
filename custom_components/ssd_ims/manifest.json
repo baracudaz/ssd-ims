@@ -1,6 +1,7 @@
 {
   "domain": "ssd_ims",
   "name": "Stredoslovenská distribučná (SSD IMS)",
+  "categories": ["energy.meters_monitoring"],
   "codeowners": ["@baracudaz"],
   "config_flow": true,
   "dependencies": ["recorder"],
