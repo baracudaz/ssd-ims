@@ -48,6 +48,7 @@ POD_ID = "99XXX1234560000G"
 def _mock_api_client():
     client = MagicMock()
     client.authenticate = AsyncMock(return_value=True)
+    client.password_expired = False
     client.get_points_of_delivery = AsyncMock(
         return_value=[PointOfDelivery(text=f"{POD_ID} (Home)", value="v1")]
     )

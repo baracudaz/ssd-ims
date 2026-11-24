@@ -95,6 +95,9 @@ class SsdImsApiClient:
         self._password: str | None = None
         self._pods_cache: list[PointOfDelivery] | None = None
         self._pods_cache_ts: datetime | None = None
+        # Set when the last login was refused because the portal password has
+        # expired, so config flows can show a specific error.
+        self.password_expired = False
 
     async def authenticate(self, username: str, password: str) -> bool:
         """Authenticate with SSD IMS portal.
@@ -109,6 +112,8 @@ class SsdImsApiClient:
         # Store credentials for re-authentication
         self._username = username
         self._password = password
+        self._authenticated = False
+        self.password_expired = False
 
         payload = {"username": username, "password": password}
 
@@ -140,6 +145,18 @@ class SsdImsApiClient:
                 self._raise_for_status(response.status, " during login")
 
             data = await response.json()
+            if isinstance(data, dict) and "expiredPasswordRedirect" in data:
+                # The portal answers a login with an expired password with 200
+                # and only a redirect to its password-change page. The stored
+                # credentials can't be used until the user changes the
+                # password on the portal, so treat it like rejected ones.
+                _LOGGER.error(
+                    "Authentication failed: the SSD IMS password has expired. "
+                    "Change it at https://ims.ssd.sk, then re-authenticate"
+                )
+                self.password_expired = True
+                return False
+
             AuthResponse(**data)  # Validate response structure
             self._authenticated = True
 

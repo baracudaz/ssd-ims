@@ -125,6 +125,7 @@ Entity registrov majú atribúty `reading_time` (čas odpočtu) a `meter_serial_
 ## Riešenie problémov
 
 - **Prihlásenie zlyhalo:** overte meno a heslo na <https://ims.ssd.sk>. Ak sa heslo zmenilo, Home Assistant ponúkne opätovné prihlásenie.
+- **Platnosť hesla vypršala:** portál SSD IMS vyžaduje pravidelnú zmenu hesla. Prihláste sa na <https://ims.ssd.sk>, zmeňte heslo a potom zadajte nové heslo v Home Assistant pri opätovnom prihlásení.
 - **Panel Energie je prázdny:** počkajte na prvú aktualizáciu a overte, či máte v paneli zvolené správne štatistiky. Dnešné údaje portál ešte nemá.
 - **Chyba certifikátu SSL:** aktualizujte certifikáty certifikačných autorít vo vašom systéme.
 

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from custom_components.ssd_ims.api_client import SsdImsAuthenticationError
@@ -356,3 +357,32 @@ class TestPodDiscovery:
 
         with pytest.raises(ConfigEntryAuthFailed):
             await coordinator._discover_pods()
+
+
+class TestExpiredPassword:
+    """A session renewal that hits an expired portal password must start
+    reauth; per-POD fetch errors are otherwise only logged and skipped."""
+
+    def _coordinator(self, *, password_expired: bool):
+        pod = PointOfDelivery(text="99XXX1234560000G (Home)", value="v1")
+        api_client = MagicMock()
+        api_client.password_expired = password_expired
+        coordinator = _make_coordinator(api_client, {})
+        coordinator.pods = {pod.id: pod}
+        coordinator.data = {"previous": True}
+        coordinator._update_statistics = AsyncMock(
+            side_effect=SsdImsAuthenticationError("Re-authentication failed")
+        )
+        return coordinator
+
+    async def test_expired_password_raises_config_entry_auth_failed(self):
+        coordinator = self._coordinator(password_expired=True)
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+    async def test_other_failure_stays_update_failed(self):
+        coordinator = self._coordinator(password_expired=False)
+
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()

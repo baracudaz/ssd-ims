@@ -49,6 +49,11 @@ from .models import PointOfDelivery
 _LOGGER = logging.getLogger(__name__)
 
 
+def _auth_error(api_client: SsdImsApiClient) -> str:
+    """Error key for a login the portal refused."""
+    return "password_expired" if api_client.password_expired else "invalid_auth"
+
+
 def _scan_interval_selector() -> SelectSelector:
     """Update-interval choice with labels from the translation files.
 
@@ -107,7 +112,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._pods = await api_client.get_points_of_delivery()
                     return await self.async_step_point_of_delivery()
                 else:
-                    errors["base"] = "invalid_auth"
+                    errors["base"] = _auth_error(api_client)
             except AbortFlow:
                 raise
             except (TimeoutError, ClientError, RuntimeError) as e:
@@ -154,7 +159,7 @@ class SsdImsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             CONF_PASSWORD: user_input[CONF_PASSWORD],
                         },
                     )
-                errors["base"] = "invalid_auth"
+                errors["base"] = _auth_error(api_client)
             except (TimeoutError, ClientError, RuntimeError) as e:
                 _LOGGER.error("Error during re-authentication: %s", e)
                 errors["base"] = "cannot_connect"

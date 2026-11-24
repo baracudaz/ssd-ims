@@ -77,6 +77,29 @@ class TestSsdImsApiClient:
                 assert api_client._authenticated is True
                 mock_post.assert_called_once()
 
+        async def test_expired_password(self, api_client):
+            """An expired password: 200 with only expiredPasswordRedirect is a
+            refused login, not a malformed response, and sets the flag."""
+            with patch.object(api_client._session, "post") as mock_post:
+                mock_response = AsyncMock()
+                mock_response.json = AsyncMock(
+                    return_value={
+                        "expiredPasswordRedirect": "https://ims.ssd.sk/redacted"
+                    }
+                )
+                mock_response.status = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.cookies = {}
+                mock_post.return_value.__aenter__.return_value = mock_response
+
+                api_client._authenticated = True  # a reused, logged-in client
+                result = await api_client.authenticate("test_user", "old_pass")
+
+                assert result is False
+                mock_post.assert_called_once()
+                assert api_client._authenticated is False
+                assert api_client.password_expired is True
+
         async def test_invalid_credentials(self, api_client):
             """Test authentication with invalid credentials."""
             with patch.object(api_client._session, "post") as mock_post:

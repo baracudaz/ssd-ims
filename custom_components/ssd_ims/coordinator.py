@@ -206,14 +206,27 @@ class SsdImsDataCoordinator(DataUpdateCoordinator):
                     today,
                 )
 
+            self._raise_if_password_expired()
             _LOGGER.info("Data update for all sensors completed.")
             return all_pod_data
 
         except ConfigEntryAuthFailed:
             raise
         except Exception as e:
+            self._raise_if_password_expired()
             _LOGGER.error("Error updating data: %s", e)
             raise UpdateFailed(f"Error updating data: {e}") from e
+
+    def _raise_if_password_expired(self) -> None:
+        """Start reauth if a session renewal hit an expired portal password.
+
+        Per-POD and per-day fetch errors are logged and skipped, so a failed
+        re-login mid-update would otherwise only show up as missing data.
+        """
+        if self.api_client.password_expired:
+            raise ConfigEntryAuthFailed(
+                "SSD IMS password has expired; change it at https://ims.ssd.sk"
+            )
 
     async def _async_backfill_statistics(self, pod_ids: list[str]) -> None:
         """Run the statistics backfill outside the config entry setup path.
