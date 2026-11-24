@@ -83,6 +83,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: SsdImsConfigEntry) -> bo
         raise ConfigEntryNotReady(f"Cannot connect to SSD IMS: {err}") from err
 
     if not authenticated:
+        if api_client.password_expired:
+            raise ConfigEntryAuthFailed(
+                "SSD IMS password has expired; change it at https://ims.ssd.sk"
+            )
         raise ConfigEntryAuthFailed("Authentication failed for SSD IMS")
 
     # Setup just succeeded, so whatever previously triggered a reauth-required

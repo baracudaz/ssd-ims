@@ -48,7 +48,8 @@
       "no_pods_selected": "Please select at least one Point of Delivery",
       "invalid_format": "Name must contain at least one letter or number",
       "too_long": "Name is too long (maximum 50 characters)",
-      "duplicate_name": "This name is already used for another POD"
+      "duplicate_name": "This name is already used for another POD",
+      "password_expired": "Your SSD IMS password has expired. Change it at ims.ssd.sk, then sign in here with the new password"
     },
     "abort": {
       "already_configured": "Integration is already configured",

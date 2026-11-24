@@ -31,6 +31,7 @@ POD_ID = "99XXX1234560000G"
 def _mock_api_client(*, authenticated=True, pods=None):
     client = MagicMock()
     client.authenticate = AsyncMock(return_value=authenticated)
+    client.password_expired = False
     client.get_points_of_delivery = AsyncMock(
         return_value=pods
         if pods is not None
@@ -161,6 +162,39 @@ async def test_portal_422_login_shows_invalid_auth(hass: HomeAssistant):
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": "invalid_auth"}
+
+
+async def test_expired_password_shows_password_expired(hass: HomeAssistant):
+    """The portal answers a login with an expired password with 200 and only
+    an expiredPasswordRedirect. Uses the real API client with only the HTTP
+    session mocked, so the user is told to change the password on the portal
+    instead of seeing "invalid_auth"."""
+    response = MagicMock()
+    response.status = 200
+    response.json = AsyncMock(
+        return_value={"expiredPasswordRedirect": "https://ims.ssd.sk/redacted"}
+    )
+    response.headers = {"content-type": "application/json"}
+    response.cookies = {}
+    session = MagicMock()
+    session.post.return_value.__aenter__ = AsyncMock(return_value=response)
+    session.post.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "custom_components.ssd_ims.config_flow.async_get_clientsession",
+        return_value=session,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"username": "test_user", "password": "old"},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "password_expired"}
 
 
 async def test_network_error_shows_cannot_connect(hass: HomeAssistant):
