@@ -1,5 +1,9 @@
 # Changelog
 
+## Version 2.6.1
+
+- **Bug fix**: An expired SSD IMS password broke setup with "4 validation errors for AuthResponse" and endless retries. The portal answers such a login with only a redirect to its password-change page; this is now a refused login, so Home Assistant asks to re-authenticate, and the login and re-authenticate forms say the password has expired (change it at <https://ims.ssd.sk> first).
+
 ## Version 2.6.0
 
 - **New feature**: Price entities. The options have two new optional fields, *VT price entity* and *NT price entity*: any `sensor`, `input_number` or `number` whose state is the price per kWh, e.g. from a supplier integration. Each wins over the fixed price of its tariff; a change reprices right away from the cached register readings, and a sensor with long-term statistics prices each hour with the price valid then (as in 2.5.0). While a chosen entity has no value, no costs are computed.
