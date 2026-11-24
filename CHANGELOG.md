@@ -2,7 +2,8 @@
 
 ## Version 2.6.1
 
-- **Bug fix**: An expired SSD IMS password broke setup with "4 validation errors for AuthResponse" and endless retries. The portal answers such a login with only a redirect to its password-change page; this is now a refused login, so Home Assistant asks to re-authenticate, and the login and re-authenticate forms say the password has expired (change it at <https://ims.ssd.sk> first).
+- **Bug fix**: An expired SSD IMS password broke setup with "4 validation errors for AuthResponse" and endless retries. The portal answers such a login with only a redirect to its password-change page; this is now a refused login, so Home Assistant asks to re-authenticate, and the login and re-authenticate forms say the password has expired (change it at <https://ims.ssd.sk> first). This also applies when the password expires while Home Assistant is running.
+- **Metadata**: `manifest.json` names the integration's category, `energy.meters_monitoring` (HACS validation warned about the missing `categories`).
 
 ## Version 2.6.0
 
