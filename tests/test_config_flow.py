@@ -192,6 +192,7 @@ async def test_expired_password_shows_password_expired(hass: HomeAssistant):
             {"username": "test_user", "password": "old"},
         )
 
+    session.post.assert_called_once()
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": "password_expired"}

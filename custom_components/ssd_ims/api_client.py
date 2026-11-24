@@ -112,6 +112,7 @@ class SsdImsApiClient:
         # Store credentials for re-authentication
         self._username = username
         self._password = password
+        self._authenticated = False
         self.password_expired = False
 
         payload = {"username": username, "password": password}

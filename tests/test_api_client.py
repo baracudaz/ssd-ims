@@ -92,9 +92,11 @@ class TestSsdImsApiClient:
                 mock_response.cookies = {}
                 mock_post.return_value.__aenter__.return_value = mock_response
 
+                api_client._authenticated = True  # a reused, logged-in client
                 result = await api_client.authenticate("test_user", "old_pass")
 
                 assert result is False
+                mock_post.assert_called_once()
                 assert api_client._authenticated is False
                 assert api_client.password_expired is True
 
